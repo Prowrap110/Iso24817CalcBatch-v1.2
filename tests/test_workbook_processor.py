@@ -345,6 +345,7 @@ def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
     assert warnings['A4'].value == 'W018'
     assert '300 mm or 500 mm' in warnings['B4'].value
     assert warnings['C4'].value == '2, 3'
+    assert warnings['A4'].font.italic is False
     assert list(warnings.tables) == ['WarningRegister']
     assert warnings.tables['WarningRegister'].ref == 'A3:C4'
 

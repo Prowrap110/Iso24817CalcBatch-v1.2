@@ -36,6 +36,7 @@ They do not modify the source repository or the existing v1.1 deployment.
 - Treat both 300 mm and 500 mm Prowrap CF cloth widths as approved batch
   configurations while retaining the fixed 50 mm stitching overlap.
 
-All other batch orchestration, workbook validation, status handling, and user
-interface code is batch-repository-only. The source repository remains
-read-only.
+All batch orchestration, workbook validation, warning-register handling,
+status handling, and batch user-interface code is batch-repository-only. The
+separately authorized v1.1 release receives only the Tg 110 degC material-basis
+change and its derived temperature behavior.

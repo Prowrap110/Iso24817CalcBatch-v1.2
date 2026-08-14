@@ -140,7 +140,14 @@ def _build_data_sheet(worksheet) -> None:
             cell = worksheet.cell(row, column)
             cell.border = Border(bottom=_THIN_GRAY)
             if column >= input_count + 1:
-                cell.alignment = Alignment(vertical='top', wrap_text=True)
+                is_diagnostic_detail = headers[column - 1] in {
+                    'B31G Detail', 'Type A Detail', 'Type B Detail',
+                }
+                cell.alignment = Alignment(
+                    vertical='top',
+                    wrap_text=not is_diagnostic_detail,
+                    shrink_to_fit=is_diagnostic_detail,
+                )
 
     _add_dropdowns(worksheet)
     _add_status_formatting(worksheet, input_count + 2)
@@ -162,6 +169,7 @@ def _build_warnings(worksheet) -> None:
         'Permanent warning references used in Batch Input & Results. '
         'Affected Excel rows use the original worksheet row numbers.'
     )
+    worksheet.merge_cells('A2:C2')
     worksheet['A2'].alignment = Alignment(wrap_text=True, vertical='top')
     headings = (
         'Warning Code',
@@ -225,14 +233,15 @@ def _build_instructions(worksheet) -> None:
         ('A5', f'3. Enter up to {MAX_ROWS} populated rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
         ('A6', '4. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
         ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
-        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. Version 1 approves 300 mm; other valid widths require review.', False),
+        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
+        ('A9', '7. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
         ('A10', 'Status meanings', True),
         ('A11', 'OK — a valid result with no review warning.', False),
         ('A12', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
         ('A13', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
         ('A14', 'INPUT ERROR — correct the indicated input and calculate again.', False),
         ('A15', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
-        ('A17', 'The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
+        ('A17', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
     )
     for address, text, heading in lines:
         cell = worksheet[address]

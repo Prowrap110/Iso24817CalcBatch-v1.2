@@ -1,4 +1,4 @@
-"""Create the controlled five-row workbook used for batch acceptance checks."""
+"""Create the controlled six-row workbook used for batch acceptance checks."""
 
 from __future__ import annotations
 
@@ -71,12 +71,13 @@ def _acceptance_rows() -> tuple[dict[str, object], ...]:
         {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 150.0},
         {**_BASELINE_ROW, 'Remaining Wall [mm]': 12.0},
         {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 0.0},
+        {**_BASELINE_ROW, 'Prowrap CF Cloth Width [mm]': 500.0},
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description='Create the five-row PROWRAP Batch acceptance workbook.',
+        description='Create the six-row PROWRAP Batch acceptance workbook.',
     )
     parser.add_argument('destination', type=Path, help='Path for the generated .xlsx workbook.')
     args = parser.parse_args()

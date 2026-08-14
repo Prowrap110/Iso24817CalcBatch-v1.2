@@ -30,9 +30,10 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
 
     assert tuple(cell.value for cell in input_sheet[1]) == INPUT_HEADERS + OUTPUT_HEADERS
     assert {'Customer', 'Project Location', 'Report No'}.isdisjoint(INPUT_HEADERS)
-    assert [input_sheet.cell(row, 1).value for row in range(2, 7)] == [
-        457.2, 457.2, 457.2, 457.2, 457.2,
+    assert [input_sheet.cell(row, 1).value for row in range(2, 8)] == [
+        457.2, 457.2, 457.2, 457.2, 457.2, 457.2,
     ]
+    assert input_sheet.cell(7, INPUT_HEADERS.index('Prowrap CF Cloth Width [mm]') + 1).value == 500.0
 
     calls = []
     original_calculate_repair = batch_adapter.calculate_repair
@@ -51,16 +52,48 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
     }
     statuses = [
         result_sheet.cell(row, output_column['Calculation Status']).value
-        for row in range(2, 7)
+        for row in range(2, 8)
     ]
 
     assert statuses == [
         'OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE',
-        'INPUT ERROR', 'REVIEW REQUIRED',
+        'INPUT ERROR', 'REVIEW REQUIRED', 'OK',
     ]
     # Preview and processing use the same engine path so the user sees the
     # final row status before generating the download.
-    assert calls == [COMMON_INFO] * 8
+    assert calls == [COMMON_INFO] * 10
     assert result_book['Batch Information']['B3'].value == 'Acceptance Customer'
     assert result_book['Batch Information']['B4'].value == 'Acceptance Location'
     assert result_book['Batch Information']['B5'].value == 'ACCEPT-001'
+    assert result_book.sheetnames == [
+        'Batch Information', 'Batch Input & Results', 'Warnings',
+        'Summary', 'Instructions', 'Lists',
+    ]
+
+    warning_values = [
+        result_sheet.cell(row, output_column['Compliance Warnings']).value
+        for row in range(2, 8)
+    ]
+    assert warning_values[1] == 'W018'
+    assert warning_values[5] is None
+    assert all(
+        value is None or all(code.startswith('W') and len(code) == 4
+                             for code in value.split(', '))
+        for value in warning_values
+    )
+    warning_sheet = result_book['Warnings']
+    warning_rows = {
+        warning_sheet.cell(row, 1).value: warning_sheet.cell(row, 3).value
+        for row in range(4, warning_sheet.max_row + 1)
+    }
+    assert warning_rows['W003'] == '4, 6'
+    assert warning_rows['W018'] == '3'
+
+    formulas = [
+        f'{worksheet.title}!{cell.coordinate}'
+        for worksheet in result_book.worksheets
+        for row in worksheet.iter_rows()
+        for cell in row
+        if cell.data_type == 'f'
+    ]
+    assert formulas == []

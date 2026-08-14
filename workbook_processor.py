@@ -14,7 +14,7 @@ from xml.etree.ElementTree import ParseError
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
-from openpyxl.styles import Alignment, Border
+from openpyxl.styles import Alignment, Border, Font
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 try:  # openpyxl uses lxml when it is available.
@@ -399,6 +399,7 @@ def _write_warnings_sheet(workbook) -> None:
             cell = warnings_sheet.cell(output_row, column)
             cell.alignment = Alignment(vertical='top', wrap_text=column == 2)
             cell.border = Border(bottom=data_sheet['A2'].border.bottom)
+            cell.font = Font(name='Calibri', size=11, color='000000')
 
     last_row = 3 + len(affected_rows)
     table = Table(displayName='WarningRegister', ref=f'A3:C{last_row}')
