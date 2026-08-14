@@ -33,6 +33,19 @@ def _show_workbook_errors(issues) -> None:
         st.write(f'• {issue.message}')
 
 
+def _show_header_summary(inspection) -> None:
+    """Show what the uploaded workbook contains without accepting altered headings."""
+    recognized = ', '.join(inspection.recognized_input_headers) or 'None'
+    missing = ', '.join(inspection.missing_input_headers) or 'None'
+    unexpected = ', '.join(inspection.unexpected_headers) or 'None'
+    st.write(
+        f'Recognized input columns ({len(inspection.recognized_input_headers)}): '
+        f'{recognized}'
+    )
+    st.write(f'Missing input columns: {missing}')
+    st.write(f'Unexpected headings: {unexpected}')
+
+
 def _show_status_counts(status_counts: dict[str, int]) -> None:
     ordered_statuses = (
         'OK',
@@ -94,6 +107,7 @@ def main() -> None:
         except Exception:
             st.error('The workbook could not be read safely. Please download a fresh template and try again.')
         else:
+            _show_header_summary(inspection)
             if inspection.workbook_errors:
                 _show_workbook_errors(inspection.workbook_errors)
             else:

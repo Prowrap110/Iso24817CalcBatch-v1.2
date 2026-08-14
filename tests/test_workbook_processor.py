@@ -32,6 +32,9 @@ def test_inspects_a_valid_template_and_previews_populated_rows():
     assert inspection.populated_rows == 1
     assert inspection.valid_rows == 1
     assert inspection.invalid_rows == 0
+    assert inspection.recognized_input_headers == INPUT_HEADERS
+    assert inspection.missing_input_headers == ()
+    assert inspection.unexpected_headers == ()
     assert inspection.preview == ({
         'Source Excel Row': 2,
         'Pipe OD [mm]': 457.2,
@@ -80,6 +83,20 @@ def test_missing_or_duplicate_headings_are_workbook_errors():
 
     inspection = inspect_workbook(_saved(workbook))
     assert [issue.code for issue in inspection.workbook_errors] == ['DUPLICATE_INPUT_HEADER']
+
+
+def test_header_inspection_identifies_recognized_missing_and_unexpected_headings():
+    """Catch a generic header failure that leaves users unable to correct their workbook."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    data = workbook['Batch Input & Results']
+    data['A1'] = 'Outside Diameter [mm]'
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['INVALID_INPUT_HEADERS']
+    assert inspection.recognized_input_headers == INPUT_HEADERS[1:]
+    assert inspection.missing_input_headers == ('Pipe OD [mm]',)
+    assert inspection.unexpected_headers == ('Outside Diameter [mm]',)
 
 
 def test_oversized_and_macro_enabled_workbooks_are_rejected_before_processing():

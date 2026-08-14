@@ -55,6 +55,9 @@ class WorkbookInspection:
     invalid_rows: int
     workbook_errors: tuple[ValidationIssue, ...]
     preview: tuple[dict[str, object], ...]
+    recognized_input_headers: tuple[str, ...]
+    missing_input_headers: tuple[str, ...]
+    unexpected_headers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -81,9 +84,10 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
         return _empty_inspection(errors)
 
     assert workbook is not None
+    header_summary = _input_header_summary(workbook)
     structure_errors = _validate_structure(workbook)
     if structure_errors:
-        return _empty_inspection(structure_errors)
+        return _empty_inspection(structure_errors, header_summary)
 
     info_sheet = workbook['Batch Information']
     common_values = {
@@ -92,7 +96,7 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     }
     formula_errors = _formula_errors(workbook)
     if formula_errors:
-        return _empty_inspection(formula_errors)
+        return _empty_inspection(formula_errors, header_summary)
 
     batch_info, batch_issues = validate_batch_info(common_values)
     data_sheet = workbook['Batch Input & Results']
@@ -135,6 +139,9 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
         invalid_rows=invalid_rows,
         workbook_errors=tuple(batch_issues) + row_limit_errors,
         preview=tuple(preview),
+        recognized_input_headers=header_summary[0],
+        missing_input_headers=header_summary[1],
+        unexpected_headers=header_summary[2],
     )
 
 
@@ -217,6 +224,21 @@ def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
     if headings != expected:
         return (_issue('INVALID_INPUT_HEADERS', 'Batch Input & Results headings do not match the controlled template.'),)
     return ()
+
+
+def _input_header_summary(workbook) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return user-facing input-header recognition details without relaxing validation."""
+    if 'Batch Input & Results' not in workbook.sheetnames:
+        return (), (), ()
+
+    headings = tuple(cell.value for cell in workbook['Batch Input & Results'][1])
+    expected = INPUT_HEADERS + OUTPUT_HEADERS
+    recognized = tuple(header for header in INPUT_HEADERS if header in headings)
+    missing = tuple(header for header in INPUT_HEADERS if header not in headings)
+    unexpected = tuple(
+        _display_heading(heading) for heading in headings if heading not in expected
+    )
+    return recognized, missing, unexpected
 
 
 def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
@@ -344,8 +366,11 @@ def _utc_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
-def _empty_inspection(errors: tuple[ValidationIssue, ...]) -> WorkbookInspection:
-    return WorkbookInspection(None, 0, 0, 0, errors, ())
+def _empty_inspection(
+    errors: tuple[ValidationIssue, ...],
+    header_summary: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] = ((), (), ()),
+) -> WorkbookInspection:
+    return WorkbookInspection(None, 0, 0, 0, errors, (), *header_summary)
 
 
 def _issue(code: str, message: str) -> ValidationIssue:
@@ -367,6 +392,12 @@ def _first_duplicate(values: tuple[object, ...]) -> object | None:
             return value
         seen.add(value)
     return None
+
+
+def _display_heading(value: object) -> str:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return '(blank)'
+    return str(value)
 
 
 def _is_blank(value: object) -> bool:
