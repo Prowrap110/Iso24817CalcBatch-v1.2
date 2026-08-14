@@ -189,6 +189,7 @@ def _build_warnings(worksheet) -> None:
     worksheet.row_dimensions[2].height = 32
     worksheet.row_dimensions[3].height = HEADER_HEIGHT
     worksheet.protection.sheet = True
+    worksheet.protection.autoFilter = False
     worksheet.protection.selectLockedCells = False
 
 

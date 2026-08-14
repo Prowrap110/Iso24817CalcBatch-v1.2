@@ -52,4 +52,3 @@ def test_cloth_warning_meaning_names_both_approved_widths():
 
     assert '300 mm' in meaning
     assert '500 mm' in meaning
-

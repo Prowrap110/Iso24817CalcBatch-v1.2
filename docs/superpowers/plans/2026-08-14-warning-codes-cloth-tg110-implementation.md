@@ -285,11 +285,11 @@ git commit -m "feat: approve 500 mm cloth and set batch Tg to 110"
 ### Task 4: Set Tg to 110 degC in the Separate v1.1 Calculator
 
 **Files:**
-- Modify: `/Users/can/Documents/GitHub/Iso24817Calc/prowrap_materials.py`
-- Modify: `/Users/can/Documents/GitHub/Iso24817Calc/test_material_specs.py`
-- Modify: `/Users/can/Documents/GitHub/Iso24817Calc/test_input_validation.py`
-- Modify: `/Users/can/Documents/GitHub/Iso24817Calc/test_type_b_formula12.py`
-- Modify: `/Users/can/Documents/GitHub/Iso24817Calc/test_current_calculation_baseline.py` only for formula-proven thermal-output changes.
+- Modify: `/Users/can/Documents/GitHub/Iso24817Calcv1.1/prowrap_materials.py`
+- Modify: `/Users/can/Documents/GitHub/Iso24817Calcv1.1/test_material_specs.py`
+- Modify: `/Users/can/Documents/GitHub/Iso24817Calcv1.1/test_input_validation.py`
+- Modify: `/Users/can/Documents/GitHub/Iso24817Calcv1.1/test_type_b_formula12.py`
+- Modify: `/Users/can/Documents/GitHub/Iso24817Calcv1.1/test_current_calculation_baseline.py` only for formula-proven thermal-output changes.
 
 **Interfaces:**
 - Consumes: the v1.1 `PROWRAP` dictionary and existing temperature validation paths.
@@ -381,6 +381,6 @@ git commit -m "docs: document warning register and Tg 110 release"
 
 - [ ] **Step 6: Publish and verify each application independently**
 
-Push `feature/warning-codes-tg110` to `Prowrap110/Iso24817CalcBatch`, open and merge its pull request, then wait for the batch Streamlit app to redeploy. Push `feature/tg110` to `Prowrap110/Iso24817Calc`, open and merge its pull request, then wait for `https://iso24817calc-prowrapv11.streamlit.app` to redeploy.
+Push `feature/warning-codes-tg110` to `Prowrap110/Iso24817CalcBatch`, open and merge its pull request, then wait for the batch Streamlit app to redeploy. Push `feature/tg110` to `Prowrap110/Iso24817Calcv1.1`, open and merge its pull request, then wait for `https://iso24817calc-prowrapv11.streamlit.app` to redeploy.
 
 Verify the batch app downloads the new six-sheet workbook. Verify v1.1 visibly reports a 90 degC Prowrap temperature limit. Do not declare either deployment complete from local tests or GitHub state alone.

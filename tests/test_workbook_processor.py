@@ -362,6 +362,20 @@ def test_processed_workbook_keeps_clear_no_warning_register_state():
     assert not warnings.tables
 
 
+def test_processed_warning_register_remains_filterable_while_protected():
+    """Catches sheet protection disabling the warning table filter controls."""
+    result = process_workbook(
+        workbook_bytes_with_rows([
+            valid_row_values(**{'Prowrap CF Cloth Width [mm]': 250.0}),
+        ]),
+        processed_at=FIXED_TIME,
+    )
+    warnings = _workbook(result.workbook_bytes)['Warnings']
+
+    assert warnings.protection.sheet is True
+    assert warnings.protection.autoFilter is False
+
+
 def test_previous_five_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the previous template."""
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))

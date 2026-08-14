@@ -6,7 +6,7 @@ Deploy batch version 1.1.0 only from the dedicated `Iso24817CalcBatch` GitHub re
 
 Never deploy the batch code over, replace, rename, or redirect the existing v1.1 repository or application:
 
-- repository: `Prowrap110/Iso24817Calc`
+- repository: `Prowrap110/Iso24817Calcv1.1`
 - existing application: `https://iso24817calc-prowrapv11.streamlit.app`
 
 This release also contains a separately reviewed v1.1 branch that changes only the approved Tg basis to 110 degC and its derived 90 degC/80 degC limits. Merge and verify that branch in the v1.1 repository independently; never copy batch workbook files into it.
@@ -17,18 +17,29 @@ This release also contains a separately reviewed v1.1 branch that changes only t
 2. Confirm Streamlit Community Cloud keeps `app.py`, Python 3.11, and the existing separate batch-app URL.
 3. Download the template, upload the generated acceptance workbook, calculate, and confirm the six statuses in order: `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, `REVIEW REQUIRED`, `OK`.
 4. Confirm the result has `Warnings` immediately after `Batch Input & Results`, row warnings contain codes only, `W003` lists affected rows `4, 6`, and the 500 mm row has no warning.
-5. Separately push and merge `feature/tg110` only in `Prowrap110/Iso24817Calc`.
+5. Separately push and merge `feature/tg110` only in `Prowrap110/Iso24817Calcv1.1`.
 6. Wait for `https://iso24817calc-prowrapv11.streamlit.app` to redeploy and confirm its displayed Prowrap temperature limit is 90 degC.
 7. Confirm both URLs still load their independent calculators.
 
 No uploaded workbook should be configured for persistent storage. Keep the application's temporary-file/session-only behaviour intact.
 
-## Rollback
+## Independent rollback procedures
 
-Rollback affects only the new batch application:
+### Batch application rollback
 
-1. Disable, redeploy, or roll back the **new batch Streamlit app** to its last known-good commit.
-2. If needed, remove only the new batch app from Streamlit Cloud.
-3. Do not change the v1.1 repository, deployment, URL, configuration, or Streamlit app during rollback.
+1. Redeploy the **batch Streamlit app** from the last known-good commit in
+   `Prowrap110/Iso24817CalcBatch`.
+2. If needed, disable or remove only the batch app from Streamlit Cloud.
+3. Do not change the v1.1 repository, deployment, URL, or configuration during
+   a batch rollback.
 
-The existing v1.1 calculator remains the independent fallback throughout.
+### v1.1 application rollback
+
+1. Redeploy the **v1.1 Streamlit app** from the last known-good commit in
+   `Prowrap110/Iso24817Calcv1.1`.
+2. Confirm `https://iso24817calc-prowrapv11.streamlit.app` again displays the
+   previous qualified temperature basis.
+3. Do not change the batch repository, deployment, URL, or configuration during
+   a v1.1 rollback.
+
+The two calculators remain independent throughout deployment and rollback.
