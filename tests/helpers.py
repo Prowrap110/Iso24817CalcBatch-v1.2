@@ -36,3 +36,18 @@ def valid_row_values(**overrides):
     }
     values.update(overrides)
     return values
+
+
+def batch_info():
+    from batch_schema import BatchInfo
+
+    return BatchInfo('Batch Customer', 'Batch Location', 'B-001')
+
+
+def validated_row(**overrides):
+    from batch_validation import validate_row
+
+    row, issues = validate_row(2, valid_row_values(**overrides))
+    assert not issues
+    assert row is not None
+    return row
