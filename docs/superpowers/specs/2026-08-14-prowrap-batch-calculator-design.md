@@ -17,7 +17,7 @@ The first release is successful when:
 
 1. The existing v1.1 application and URL remain unchanged and independently usable.
 2. The new batch application has its own repository, Streamlit deployment, and URL.
-3. A user can download the controlled Excel template, enter up to 500 independent defect rows, upload the workbook, and download a processed copy.
+3. A user can download the controlled Excel template, enter Customer, Project Location, and Report No once for the batch, enter up to 500 independent defect rows beginning with Pipe OD, upload the workbook, and download a processed copy.
 4. The application preserves input values and row order and appends results to the same row.
 5. A bad row does not stop valid rows from being calculated.
 6. Each row clearly reports `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, or `SYSTEM ERROR`.
@@ -104,11 +104,21 @@ Uploaded and generated workbooks remain in session memory or temporary storage o
 
 ## 6. Workbook Design
 
-The controlled workbook contains four worksheets.
+The controlled workbook contains five worksheets.
+
+### `Batch Information`
+
+This worksheet contains three common fields that apply to every defect row:
+
+- `Customer`
+- `Project Location`
+- `Report No`
+
+Each field is entered once. The values are passed to every row calculation and repeated in the `Summary` worksheet, but they are not repeated in the defect table.
 
 ### `Batch Input & Results`
 
-This is the main worksheet. Each populated row represents one defect. Input columns appear first, followed by calculation outputs. The processor never sorts rows, deletes rows, renames user identifiers, or changes input values.
+This is the main worksheet. Each populated row represents one defect. The first input column is `Pipe OD [mm]`; input columns appear first, followed by calculation outputs. The processor never sorts rows, deletes rows, or changes input values.
 
 Formatting rules:
 
@@ -125,6 +135,7 @@ Formatting rules:
 
 This worksheet contains:
 
+- common Customer, Project Location, and Report No values;
 - workbook name and processing time;
 - total populated rows;
 - counts by calculation status;
@@ -144,14 +155,10 @@ This hidden worksheet supplies Excel data-validation lists. It contains no engin
 
 ## 7. Canonical Input Columns
 
-The template uses plain human-readable headings in row 1, with units included where applicable. The application maps these headings to internal machine-stable keys that are not exposed to the user. Header comments provide additional guidance.
+The row template uses plain human-readable headings in row 1, with units included where applicable. The application maps these headings to internal machine-stable keys that are not exposed to the user. Header comments provide additional guidance. Customer, Project Location, and Report No are batch-level inputs on the `Batch Information` worksheet and do not appear in this table.
 
 | Column | Requirement | Unit or choices |
 |---|---|---|
-| `Defect ID` | Required; unique within workbook | Text |
-| `Customer` | Required | Text |
-| `Project Location` | Required | Text |
-| `Report No` | Required | Text |
 | `Pipe OD [mm]` | Required | mm; positive |
 | `Nominal Wall [mm]` | Required | mm; positive |
 | `Pipe Yield [MPa]` | Required | MPa; positive |
@@ -245,13 +252,14 @@ For `NOT REPAIRABLE`, the workbook retains diagnostic pressure and Formula 12 in
 
 For each populated row:
 
-1. Normalize Excel cell values without changing the displayed input cells.
-2. Validate all required, conditional, numeric, and enumerated inputs.
-3. Call the pure `calculate_repair()` engine.
-4. If requested and applicable, call `calculate_type_a_class3_prowrap_check()` and merge it through `apply_type_a_class3_result_to_repair()`.
-5. Classify the engineering outcome using the status model.
-6. Flatten the selected engine outputs into output columns.
-7. Continue to the next row even if the current row fails.
+1. Read and validate the common Customer, Project Location, and Report No values once.
+2. Normalize Excel row values without changing the displayed input cells.
+3. Validate all required, conditional, numeric, and enumerated row inputs.
+4. Call the pure `calculate_repair()` engine using the common batch information and the row inputs.
+5. If requested and applicable, call `calculate_type_a_class3_prowrap_check()` and merge it through `apply_type_a_class3_result_to_repair()`.
+6. Classify the engineering outcome using the status model.
+7. Flatten the selected engine outputs into output columns.
+8. Continue to the next row even if the current row fails.
 
 Shared engine calls are wrapped by a batch adapter. Streamlit, Excel formatting, and status presentation do not enter the engineering modules.
 
@@ -286,7 +294,7 @@ No module both calculates engineering results and controls the Streamlit UI.
 
 ## 13. Error Handling
 
-Workbook-level errors stop processing and explain how to correct the file. Examples include wrong file type, missing primary worksheet, duplicate column names, missing required columns, password protection, files larger than 10 MB, or more than 500 populated rows.
+Workbook-level errors stop processing and explain how to correct the file. Examples include wrong file type, missing common batch information, missing primary worksheet, duplicate column names, missing required columns, password protection, files larger than 10 MB, or more than 500 populated rows.
 
 Row-level errors do not stop the batch. Each affected row receives a stable error code and a plain-language explanation. Unexpected exceptions are recorded as `SYSTEM ERROR`; internal stack traces are logged for development but are not written into customer workbooks.
 
@@ -303,10 +311,10 @@ The processor always writes to a new in-memory workbook. It never overwrites the
 ### Batch behavior
 
 - One valid row matches the single-case engine field by field.
-- Multiple valid rows preserve order and defect IDs.
+- Multiple valid rows preserve order and source Excel row numbers.
 - A mixed workbook produces results for valid rows and errors only for invalid rows.
 - Blank rows remain blank and do not count toward the 500-row limit.
-- Duplicate defect IDs are rejected at row level.
+- The common Customer, Project Location, and Report No values are applied identically to every valid row.
 - Conditional internal-corrosion rate behavior matches v1.1.
 - Strict selection validation prevents silent route changes.
 - `NOT REPAIRABLE` rows contain no installable repair quantities.
