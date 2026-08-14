@@ -1,0 +1,247 @@
+"""Generate the controlled, formula-free PROWRAP batch input workbook."""
+
+from io import BytesIO
+
+from openpyxl import Workbook
+from openpyxl.comments import Comment
+from openpyxl.formatting.rule import Rule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
+from openpyxl.styles.differential import DifferentialStyle
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.workbook.defined_name import DefinedName
+
+from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
+from workbook_formatting import (
+    COMMON_FIELD_COLOR,
+    INPUT_ERROR_COLOR,
+    INPUT_HEADER_COLOR,
+    NOT_REPAIRABLE_COLOR,
+    OK_COLOR,
+    REVIEW_REQUIRED_COLOR,
+    SYSTEM_ERROR_COLOR,
+    apply_common_field_style,
+    apply_header_style,
+    apply_wrapped_text,
+    set_capped_column_widths,
+    unlock_cells,
+)
+
+
+_CHOICES = {
+    'MechanismChoices': ('Mechanism', ('Corrosion', 'Dent', 'Leak', 'Crack')),
+    'DefectLocationChoices': ('Defect Location', ('External', 'Internal')),
+    'TypeACheckChoices': ('Run Type A / Class 3 Check', ('Yes', 'No')),
+    'ComponentTypeChoices': (
+        'Component Type', ('Straight', 'Bend', 'Tee', 'Flange', 'Reducer'),
+    ),
+    'AxialLoadCaseChoices': ('Axial Load Case', (0, 1)),
+}
+
+_HEADER_NOTES = {
+    'Pipe OD [mm]': 'Required. Enter the outside diameter in millimetres; value must be positive.',
+    'Nominal Wall [mm]': 'Required. Enter the nominal pipe wall in millimetres; value must be positive.',
+    'Pipe Yield [MPa]': 'Required. Enter the specified pipe yield strength in MPa; value must be positive.',
+    'Design Pressure [bar]': 'Required. Enter the design pressure in bar; zero or a positive value.',
+    'Operating Temperature [degC]': 'Required. Enter the operating temperature in degrees C.',
+    'Mechanism': 'Required. Choose Corrosion, Dent, Leak, or Crack.',
+    'Defect Location': 'Required. Choose External or Internal.',
+    'Defect Length [mm]': 'Required. Enter the defect length in millimetres; value must be positive.',
+    'Remaining Wall [mm]': 'Required. Enter the minimum remaining wall in millimetres; it cannot exceed nominal wall.',
+    'Internal Corrosion Rate [mm/year]': (
+        'Enter zero or a positive internal corrosion rate in mm/year. This value is '
+        'required only for internal corrosion and may otherwise be blank.'
+    ),
+    'Design Life [years]': 'Required. Enter a whole number of years, at least one.',
+    'Design Factor': 'Required. Enter a value from 0.10 through 1.00.',
+    'Run Type A / Class 3 Check': 'Required. Choose Yes only when the additional Type A / Class 3 check is required.',
+    'Installation Temperature [degC]': 'Required. Enter the installation temperature in degrees C.',
+    'Component Type': 'Required. Choose Straight, Bend, Tee, Flange, or Reducer.',
+    'Cyclic Derating Factor': 'Required. Enter a factor greater than zero and no greater than one.',
+    'Axial Load Case': 'Required. Choose 0 for no axial load case or 1 for axial load case.',
+    'Prowrap CF Cloth Width [mm]': 'Required. Enter a cloth width greater than the 50 mm stitch overlap; 300 mm is the approved configured width.',
+}
+
+_THIN_GRAY = Side(style='thin', color='D9E1F2')
+
+
+def create_template_workbook() -> bytes:
+    """Return a ready-to-fill controlled batch workbook as ``.xlsx`` bytes."""
+    workbook = Workbook()
+    batch_info = workbook.active
+    batch_info.title = 'Batch Information'
+    data = workbook.create_sheet('Batch Input & Results')
+    summary = workbook.create_sheet('Summary')
+    instructions = workbook.create_sheet('Instructions')
+    lists = workbook.create_sheet('Lists')
+
+    _build_batch_information(batch_info)
+    _build_data_sheet(data)
+    _build_summary(summary)
+    _build_instructions(instructions)
+    _build_lists(workbook, lists)
+    lists.sheet_state = 'hidden'
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _build_batch_information(worksheet) -> None:
+    worksheet['A1'] = 'PROWRAP Batch Repair Calculator'
+    worksheet['A1'].font = Font(name='Calibri', size=16, bold=True, color=INPUT_HEADER_COLOR)
+    worksheet['A2'] = 'Enter the three values that apply to every defect row in this batch.'
+    worksheet['A2'].alignment = Alignment(wrap_text=True)
+    for row, label in enumerate(('Customer', 'Project Location', 'Report No'), start=3):
+        worksheet.cell(row, 1, label)
+        worksheet.cell(row, 2)
+        apply_common_field_style(worksheet.cell(row, 1), worksheet.cell(row, 2))
+        worksheet.cell(row, 2).comment = Comment('Enter this common batch value once.', 'PROTAP')
+    worksheet.column_dimensions['A'].width = 24
+    worksheet.column_dimensions['B'].width = 42
+    worksheet.freeze_panes = 'A3'
+
+
+def _build_data_sheet(worksheet) -> None:
+    headers = INPUT_HEADERS + OUTPUT_HEADERS
+    input_count = len(INPUT_HEADERS)
+    for column, header in enumerate(headers, start=1):
+        cell = worksheet.cell(1, column, header)
+        apply_header_style(cell, INPUT_HEADER_COLOR if column <= input_count else '404040')
+        if column <= input_count:
+            cell.comment = Comment(_HEADER_NOTES[header], 'PROTAP')
+
+    worksheet.row_dimensions[1].height = 42
+    worksheet.freeze_panes = 'A2'
+    end_column = worksheet.cell(1, len(headers)).coordinate.rstrip('1')
+    table_ref = f'A1:{end_column}{MAX_ROWS + 1}'
+    table = Table(displayName='BatchRows', ref=table_ref)
+    table.tableStyleInfo = TableStyleInfo(
+        name='TableStyleMedium2', showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True, showColumnStripes=False,
+    )
+    worksheet.add_table(table)
+
+    input_cells = (
+        worksheet.cell(row, column)
+        for row in range(2, MAX_ROWS + 2)
+        for column in range(1, input_count + 1)
+    )
+    unlock_cells(input_cells)
+    for row in range(2, MAX_ROWS + 2):
+        for column in range(1, len(headers) + 1):
+            cell = worksheet.cell(row, column)
+            cell.border = Border(bottom=_THIN_GRAY)
+            if column >= input_count + 1:
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
+
+    _add_dropdowns(worksheet)
+    _add_status_formatting(worksheet, input_count + 2)
+    worksheet.protection.sheet = True
+    worksheet.protection.selectLockedCells = False
+    worksheet.protection.selectUnlockedCells = True
+    set_capped_column_widths(worksheet)
+    for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
+        worksheet.column_dimensions[column].width = 28
+
+
+def _build_summary(worksheet) -> None:
+    worksheet['A1'] = 'Batch Summary'
+    worksheet['A1'].font = Font(name='Calibri', size=16, bold=True, color=INPUT_HEADER_COLOR)
+    worksheet['A3'] = 'Customer'
+    worksheet['A4'] = 'Project Location'
+    worksheet['A5'] = 'Report No'
+    worksheet['A7'] = 'Workbook Name'
+    worksheet['A8'] = 'Processing Time [UTC]'
+    worksheet['A10'] = 'Total Populated Rows'
+    worksheet['A12'] = 'Status Counts'
+    for row, status in enumerate(('OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE', 'INPUT ERROR', 'SYSTEM ERROR'), start=13):
+        worksheet.cell(row, 1, status)
+    worksheet['A19'] = 'Type A Route Count'
+    worksheet['A20'] = 'Type B Route Count'
+    worksheet['A21'] = 'Rows with Compliance Warnings'
+    worksheet['A22'] = 'Rows Requiring Engineering Review'
+    worksheet['A24'] = 'Batch Engine Version'
+    worksheet['A25'] = 'Pinned Source Revision'
+    worksheet['A27'] = (
+        'These results are preliminary screening outputs only and require competent engineering review '
+        'before repair design, approval, procurement, or installation.'
+    )
+    worksheet['A27'].font = Font(name='Calibri', size=10, italic=True, color='9C0006')
+    worksheet['A27'].alignment = Alignment(wrap_text=True, vertical='top')
+    worksheet.merge_cells('A27:B29')
+    for row in range(3, 26):
+        if worksheet.cell(row, 1).value:
+            worksheet.cell(row, 1).font = Font(name='Calibri', bold=True)
+    worksheet.column_dimensions['A'].width = 35
+    worksheet.column_dimensions['B'].width = 42
+    worksheet.row_dimensions[27].height = 48
+
+
+def _build_instructions(worksheet) -> None:
+    lines = (
+        ('A1', 'PROWRAP Batch Repair Calculator — Instructions', True),
+        ('A3', '1. Complete Customer, Project Location, and Report No once on the Batch Information sheet.', False),
+        ('A4', '2. Enter one independent defect per row on Batch Input & Results; the first input is Pipe OD [mm].', False),
+        ('A5', f'3. Enter up to {MAX_ROWS} populated rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
+        ('A6', '4. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
+        ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
+        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. Version 1 approves 300 mm; other valid widths require review.', False),
+        ('A10', 'Status meanings', True),
+        ('A11', 'OK — a valid result with no review warning.', False),
+        ('A12', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
+        ('A13', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
+        ('A14', 'INPUT ERROR — correct the indicated input and calculate again.', False),
+        ('A15', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
+        ('A17', 'The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
+    )
+    for address, text, heading in lines:
+        cell = worksheet[address]
+        cell.value = text
+        cell.font = Font(name='Calibri', size=14 if address == 'A1' else 11, bold=heading)
+        cell.alignment = Alignment(wrap_text=True, vertical='top')
+    worksheet.column_dimensions['A'].width = 115
+    for row in range(3, 18):
+        worksheet.row_dimensions[row].height = 32
+    worksheet.row_dimensions[1].height = 28
+
+
+def _build_lists(workbook, worksheet) -> None:
+    for column, (name, (_, choices)) in enumerate(_CHOICES.items(), start=1):
+        for row, value in enumerate(choices, start=1):
+            worksheet.cell(row, column, value)
+        letter = worksheet.cell(1, column).column_letter
+        workbook.defined_names.add(DefinedName(
+            name, attr_text=f"'Lists'!${letter}$1:${letter}${len(choices)}",
+        ))
+
+
+def _add_dropdowns(worksheet) -> None:
+    for name, (header, _) in _CHOICES.items():
+        column = INPUT_HEADERS.index(header) + 1
+        letter = worksheet.cell(1, column).column_letter
+        validation = DataValidation(
+            type='list', formula1=f'={name}', allow_blank=False,
+            errorTitle='Select a supported value',
+            error='Choose a value from the controlled list.',
+        )
+        validation.add(f'{letter}2:{letter}{MAX_ROWS + 1}')
+        worksheet.add_data_validation(validation)
+
+
+def _add_status_formatting(worksheet, status_column: int) -> None:
+    letter = worksheet.cell(1, status_column).column_letter
+    status_colors = {
+        'OK': OK_COLOR,
+        'REVIEW REQUIRED': REVIEW_REQUIRED_COLOR,
+        'NOT REPAIRABLE': NOT_REPAIRABLE_COLOR,
+        'INPUT ERROR': INPUT_ERROR_COLOR,
+        'SYSTEM ERROR': SYSTEM_ERROR_COLOR,
+    }
+    for status, color in status_colors.items():
+        rule = Rule(
+            type='containsText', operator='containsText', text=status,
+            dxf=DifferentialStyle(fill=PatternFill(fill_type='solid', fgColor=color)),
+        )
+        rule.formula = [f'NOT(ISERROR(SEARCH("{status}",{letter}2)))']
+        worksheet.conditional_formatting.add(f'{letter}2:{letter}{MAX_ROWS + 1}', rule)

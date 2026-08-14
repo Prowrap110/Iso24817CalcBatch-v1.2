@@ -51,3 +51,26 @@ def validated_row(**overrides):
     assert not issues
     assert row is not None
     return row
+
+
+def workbook_bytes_with_rows(rows):
+    """Create a controlled template populated with test defect rows."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from batch_schema import INPUT_HEADERS
+    from workbook_template import create_template_workbook
+
+    workbook = load_workbook(BytesIO(create_template_workbook()))
+    info = workbook['Batch Information']
+    info['B3'] = 'Batch Customer'
+    info['B4'] = 'Batch Location'
+    info['B5'] = 'B-001'
+    data = workbook['Batch Input & Results']
+    for excel_row, values in enumerate(rows, start=2):
+        for column, header in enumerate(INPUT_HEADERS, start=1):
+            data.cell(excel_row, column, values.get(header))
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
