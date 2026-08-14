@@ -108,6 +108,9 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
 
     batch_info, batch_issues = validate_batch_info(common_values)
     data_sheet = workbook['Batch Input & Results']
+    out_of_range_errors = _out_of_range_input_errors(data_sheet)
+    if out_of_range_errors:
+        return _empty_inspection(out_of_range_errors, header_summary)
     populated = _populated_rows(data_sheet)
     row_limit_errors = (
         (_issue('TOO_MANY_ROWS', f'No more than {MAX_ROWS} populated defect rows are allowed.'),)
@@ -292,6 +295,18 @@ def _populated_rows(worksheet) -> list[tuple[int, dict[str, object]]]:
         if any(not _is_blank(value) for value in values.values()):
             populated.append((excel_row, values))
     return populated
+
+
+def _out_of_range_input_errors(worksheet) -> tuple[ValidationIssue, ...]:
+    for excel_row in range(MAX_ROWS + 2, worksheet.max_row + 1):
+        for column in range(1, len(INPUT_HEADERS) + 1):
+            if not _is_blank(worksheet.cell(excel_row, column).value):
+                coordinate = worksheet.cell(excel_row, column).coordinate
+                return (_issue(
+                    'INPUT_ROW_OUT_OF_RANGE',
+                    f'Input values are allowed only in rows 2 through {MAX_ROWS + 1}: {coordinate}.',
+                ),)
+    return ()
 
 
 def _calculate_one(
@@ -481,7 +496,11 @@ def _sanitized_source_name(source_name: str | None) -> str:
         return 'PROWRAP Batch Results Workbook'
     filename = Path(str(source_name).replace('\\', '/')).name
     clean = ''.join(character for character in filename if character.isprintable()).strip()
-    return clean or 'PROWRAP Batch Results Workbook'
+    if not clean:
+        return 'PROWRAP Batch Results Workbook'
+    if clean.lstrip().startswith(('=', '+', '-', '@')):
+        return f"'{clean}"
+    return clean
 
 
 def _is_type_a(method: object) -> bool:

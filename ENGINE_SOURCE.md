@@ -25,6 +25,11 @@ They do not modify the source repository or the existing v1.1 deployment.
   engineering review.
 - Use the configured PRW110 Type B two-year service-life limit consistently,
   including zero-pressure Type B warnings.
+- Keep the copied engine strict by default for design temperatures above the
+  qualified Prowrap limit.  The batch adapter alone opts into numeric
+  screening outputs through `allow_unqualified_temperature=True`, adds an
+  explicit qualification warning, and returns `REVIEW REQUIRED`; non-batch
+  callers retain the strict input rejection.
 
 All other batch orchestration, workbook validation, status handling, and user
 interface code is batch-repository-only. The source repository remains

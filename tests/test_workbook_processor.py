@@ -218,8 +218,28 @@ def test_more_than_500_populated_rows_is_a_workbook_error():
 
     inspection = inspect_workbook(source)
 
-    assert inspection.populated_rows == 501
-    assert [issue.code for issue in inspection.workbook_errors] == ['TOO_MANY_ROWS']
+    assert inspection.populated_rows == 0
+    assert [issue.code for issue in inspection.workbook_errors] == ['INPUT_ROW_OUT_OF_RANGE']
+
+
+@pytest.mark.parametrize('excel_row', [502, 1000])
+def test_populated_input_beyond_controlled_rows_is_a_workbook_error(excel_row):
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Batch Input & Results'].cell(excel_row, 1).value = 508.0
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['INPUT_ROW_OUT_OF_RANGE']
+    assert f'A{excel_row}' in inspection.workbook_errors[0].message
+
+
+def test_exactly_500_controlled_rows_remain_valid():
+    inspection = inspect_workbook(
+        workbook_bytes_with_rows([valid_row_values() for _ in range(500)])
+    )
+
+    assert inspection.populated_rows == 500
+    assert inspection.workbook_errors == ()
 
 
 def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
@@ -281,6 +301,27 @@ def test_processed_workbook_records_the_sanitized_uploaded_source_name():
     )
 
     assert _workbook(result.workbook_bytes)['Summary']['B7'].value == 'Customer Batch.xlsx'
+
+
+@pytest.mark.parametrize('source_name', [
+    '=1+1.xlsx',
+    '+1+1.xlsx',
+    '-1+1.xlsx',
+    '@danger.xlsx',
+    '../../\x00  @unsafe.xlsx',
+])
+def test_processed_workbook_neutralizes_formula_like_source_names(source_name):
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+        source_name=source_name,
+    )
+
+    source_cell = _workbook(result.workbook_bytes)['Summary']['B7']
+
+    assert source_cell.data_type == 's'
+    assert source_cell.value.startswith("'")
+    assert '\x00' not in source_cell.value
 
 
 def test_processing_regenerates_a_clean_workbook_after_a_row_is_cleared():
