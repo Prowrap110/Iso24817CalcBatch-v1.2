@@ -9,9 +9,15 @@ from io import BytesIO
 import json
 from pathlib import PurePosixPath
 import zipfile
+from xml.etree.ElementTree import ParseError
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
+
+try:  # openpyxl uses lxml when it is available.
+    from lxml.etree import XMLSyntaxError
+except ImportError:  # pragma: no cover - exercised where lxml is unavailable.
+    XMLSyntaxError = ParseError
 
 from batch_adapter import RowCalculation, calculate_row
 from batch_schema import (
@@ -84,7 +90,7 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
         header: info_sheet.cell(row, 2).value
         for row, header in enumerate(_COMMON_HEADERS, start=3)
     }
-    formula_errors = _common_formula_errors(common_values)
+    formula_errors = _formula_errors(workbook)
     if formula_errors:
         return _empty_inspection(formula_errors)
 
@@ -178,7 +184,15 @@ def _load_controlled_workbook(data: bytes):
                 if PurePosixPath(entry.filename).name.lower() == 'vbaproject.bin':
                     return None, (_issue('MACROS_NOT_ALLOWED', 'Macro-enabled workbooks are not supported.'),)
         return load_workbook(BytesIO(data), data_only=False, keep_vba=False), ()
-    except (InvalidFileException, KeyError, OSError, ValueError, zipfile.BadZipFile):
+    except (
+        InvalidFileException,
+        KeyError,
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        ParseError,
+        XMLSyntaxError,
+    ):
         return None, (_issue('UNREADABLE_WORKBOOK', 'The uploaded file is not a readable .xlsx workbook.'),)
 
 
@@ -205,10 +219,15 @@ def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
     return ()
 
 
-def _common_formula_errors(values: dict[str, object]) -> tuple[ValidationIssue, ...]:
-    for header in _COMMON_HEADERS:
-        if _is_formula(values[header]):
-            return (_issue('FORMULA_NOT_ALLOWED', f'{header}: formulas are not allowed.'),)
+def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if _is_formula(cell.value):
+                    return (_issue(
+                        'FORMULA_NOT_ALLOWED',
+                        f'Formula cells are not allowed: {worksheet.title}!{cell.coordinate}.',
+                    ),)
     return ()
 
 

@@ -105,13 +105,40 @@ def test_formula_inputs_and_corrupt_or_encrypted_data_are_rejected_safely():
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
     workbook['Batch Input & Results']['A2'] = '=1+1'
     inspection = inspect_workbook(_saved(workbook))
-    assert inspection.invalid_rows == 1
-    assert inspection.preview[0]['Calculation Status'] == 'INPUT ERROR'
-    assert inspection.preview[0]['Error Code'] == 'FORMULA_NOT_ALLOWED'
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
 
     for data in (b'not an xlsx', _encrypted_zip_bytes()):
         inspection = inspect_workbook(data)
         assert [issue.code for issue in inspection.workbook_errors] == ['UNREADABLE_WORKBOOK']
+
+
+@pytest.mark.parametrize(('worksheet_name', 'coordinate'), [
+    ('Batch Input & Results', 'AY501'),
+    ('Summary', 'B30'),
+])
+def test_formula_anywhere_in_the_controlled_workbook_is_rejected(worksheet_name, coordinate):
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook[worksheet_name][coordinate] = '=1+1'
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
+    assert coordinate in inspection.workbook_errors[0].message
+
+
+def test_zip_valid_workbook_with_malformed_xml_is_rejected_safely():
+    source = workbook_bytes_with_rows([valid_row_values()])
+    malformed = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(malformed, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == 'xl/workbook.xml':
+                content = b'<workbook><sheets>'
+            output_zip.writestr(entry, content)
+
+    inspection = inspect_workbook(malformed.getvalue())
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['UNREADABLE_WORKBOOK']
 
 
 def test_more_than_500_populated_rows_is_a_workbook_error():
