@@ -265,6 +265,26 @@ def test_far_input_scan_uses_loaded_cells_without_max_row_iteration(monkeypatch)
     assert 'A1048576' in issues[0].message
 
 
+def test_populated_row_scan_stays_within_controlled_input_rectangle(monkeypatch):
+    import workbook_processor
+
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    data = workbook['Batch Input & Results']
+    data.cell(1_048_576, len(INPUT_HEADERS) + len(OUTPUT_HEADERS)).value = 'harmless output note'
+    original_cell = data.cell
+
+    def controlled_cell(row=None, column=None, *args, **kwargs):
+        if row is not None and row > MAX_ROWS + 1:
+            raise AssertionError('uncontrolled row scan')
+        return original_cell(row=row, column=column, *args, **kwargs)
+
+    monkeypatch.setattr(data, 'cell', controlled_cell)
+
+    populated = workbook_processor._populated_rows(data)
+
+    assert [excel_row for excel_row, _ in populated] == [2]
+
+
 def test_formula_issue_has_priority_over_far_input_row_issue():
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
     workbook['Batch Input & Results'].cell(1_048_576, 1).value = 508.0

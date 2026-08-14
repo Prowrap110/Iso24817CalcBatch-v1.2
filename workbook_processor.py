@@ -286,7 +286,7 @@ def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
 
 def _populated_rows(worksheet) -> list[tuple[int, dict[str, object]]]:
     populated: list[tuple[int, dict[str, object]]] = []
-    for excel_row in range(2, worksheet.max_row + 1):
+    for excel_row in range(2, MAX_ROWS + 2):
         values = {
             header: worksheet.cell(excel_row, column).value
             for column, header in enumerate(INPUT_HEADERS, start=1)
