@@ -406,4 +406,3 @@ def calculate_type_a_class3(inputs: TypeAClass3Inputs) -> dict:
             "Pressure-only Feq default is used when equivalent axial load is not supplied.",
         ],
     }
-

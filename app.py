@@ -113,7 +113,7 @@ def main() -> None:
             else:
                 st.success(
                     f'Recognized {inspection.populated_rows} populated row(s): '
-                    f'{inspection.valid_rows} ready and {inspection.invalid_rows} needing correction.'
+                    f'{inspection.valid_rows} valid and {inspection.invalid_rows} needing correction.'
                 )
 
     st.subheader('3. Review preview')
@@ -140,7 +140,11 @@ def main() -> None:
     if calculate and source_data is not None:
         try:
             processed_at = datetime.now(UTC)
-            processed = process_workbook(source_data, processed_at=processed_at)
+            processed = process_workbook(
+                source_data,
+                processed_at=processed_at,
+                source_name=uploaded.name,
+            )
         except WorkbookProcessingError as error:
             _show_workbook_errors(error.issues)
         except Exception:

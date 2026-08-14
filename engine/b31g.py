@@ -110,4 +110,3 @@ def assess_b31g(
         result["s_o_mpa"] = s_o
         result["acceptable"] = s_f >= safety_factor * s_o - 1e-9
     return result
-

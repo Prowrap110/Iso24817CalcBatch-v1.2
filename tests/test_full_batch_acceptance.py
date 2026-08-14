@@ -58,7 +58,9 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
         'OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE',
         'INPUT ERROR', 'REVIEW REQUIRED',
     ]
-    assert calls == [COMMON_INFO, COMMON_INFO, COMMON_INFO, COMMON_INFO]
+    # Preview and processing use the same engine path so the user sees the
+    # final row status before generating the download.
+    assert calls == [COMMON_INFO] * 8
     assert result_book['Batch Information']['B3'].value == 'Acceptance Customer'
     assert result_book['Batch Information']['B4'].value == 'Acceptance Location'
     assert result_book['Batch Information']['B5'].value == 'ACCEPT-001'

@@ -27,7 +27,7 @@ def test_template_has_common_info_and_row_table():
 
     data = workbook['Batch Input & Results']
     assert data['A1'].value == 'Pipe OD [mm]'
-    assert data.freeze_panes == 'A2'
+    assert data.freeze_panes == 'B2'
     assert workbook['Lists'].sheet_state == 'hidden'
 
 

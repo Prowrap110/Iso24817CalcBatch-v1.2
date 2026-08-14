@@ -169,6 +169,7 @@ def _validate_inputs(
     yield_strength,
     design_factor,
     design_life,
+    allow_unqualified_temperature=False,
 ):
     errors = []
     if od <= 0:
@@ -177,7 +178,7 @@ def _validate_inputs(
         errors.append("Nominal wall thickness must be greater than zero.")
     if pressure < 0:
         errors.append("Design pressure cannot be negative.")
-    if temp > PROWRAP["max_temp"]:
+    if temp > PROWRAP["max_temp"] and not allow_unqualified_temperature:
         errors.append(
             f"Operating temperature ({temp} degC) exceeds Prowrap limit of "
             f"{PROWRAP['max_temp']} degC."
@@ -321,6 +322,7 @@ def calculate_repair(
     cyclic_derating_factor=1.0,
     axial_load_case=0,
     cloth_width_mm=PROWRAP["cloth_width_mm"],
+    allow_unqualified_temperature=False,
 ):
     """Calculate repair outputs (baseline route).
 
@@ -360,6 +362,7 @@ def calculate_repair(
         yield_strength,
         design_factor,
         design_life,
+        allow_unqualified_temperature=allow_unqualified_temperature,
     )
     if internal_corrosion_rate < 0:
         raise ValueError("Internal corrosion rate cannot be negative.")
@@ -549,6 +552,12 @@ def calculate_repair(
     epoxy_kg = optimized_sqm * 1.2
 
     compliance_warnings = []
+    if temp > PROWRAP["max_temp"]:
+        compliance_warnings.append(
+            f"Design temperature {temp:.1f} degC exceeds the qualified "
+            f"Prowrap limit of {PROWRAP['max_temp']:.2f} degC. The result "
+            "requires engineering review before repair design or installation."
+        )
     if (
         type_b_details is not None
         and not type_b_details.get("repairable_formula12", True)

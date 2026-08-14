@@ -40,10 +40,24 @@ def test_unapproved_cloth_width_calculates_but_requires_review():
                for warning in outcome.outputs['Compliance Warnings'])
 
 
-def test_expected_engine_value_error_becomes_input_error():
+def test_temperature_above_qualification_limit_becomes_review_required():
     outcome = calculate_row(batch_info(), validated_row(**{
         'Operating Temperature [degC]': 150.0,
     }))
 
-    assert outcome.status.value == 'INPUT ERROR'
-    assert outcome.error_message == 'Operating temperature (150.0 degC) exceeds Prowrap limit of 58.18 degC.'
+    assert outcome.status.value == 'REVIEW REQUIRED'
+    assert outcome.error_message == ''
+    assert any('150.0 degC exceeds the qualified Prowrap limit' in warning
+               for warning in outcome.outputs['Compliance Warnings'])
+
+
+def test_zero_pressure_type_a_check_is_skipped_and_requires_review():
+    outcome = calculate_row(batch_info(), validated_row(**{
+        'Design Pressure [bar]': 0.0,
+        'Run Type A / Class 3 Check': 'Yes',
+    }))
+
+    assert outcome.status.value == 'REVIEW REQUIRED'
+    assert outcome.outputs['Type A / Class 3 Check Run'] is False
+    assert any('zero design pressure' in warning.lower()
+               for warning in outcome.outputs['Compliance Warnings'])

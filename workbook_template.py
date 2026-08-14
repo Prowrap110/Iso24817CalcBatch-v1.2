@@ -114,7 +114,7 @@ def _build_data_sheet(worksheet) -> None:
             cell.comment = Comment(_HEADER_NOTES[header], 'PROTAP')
 
     worksheet.row_dimensions[1].height = HEADER_HEIGHT
-    worksheet.freeze_panes = 'A2'
+    worksheet.freeze_panes = 'B2'
     end_column = worksheet.cell(1, len(headers)).coordinate.rstrip('1')
     table_ref = f'A1:{end_column}{MAX_ROWS + 1}'
     table = Table(displayName='BatchRows', ref=table_ref)

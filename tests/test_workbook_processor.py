@@ -4,10 +4,15 @@ import zipfile
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
-from batch_schema import INPUT_HEADERS, MAX_UPLOAD_BYTES
+from batch_schema import INPUT_HEADERS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
 from tests.helpers import valid_row_values, workbook_bytes_with_rows
-from workbook_processor import WorkbookProcessingError, inspect_workbook, process_workbook
+from workbook_processor import (
+    WorkbookProcessingError,
+    inspect_workbook,
+    process_workbook,
+)
 
 
 FIXED_TIME = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
@@ -40,10 +45,22 @@ def test_inspects_a_valid_template_and_previews_populated_rows():
         'Pipe OD [mm]': 457.2,
         'Mechanism': 'Corrosion',
         'Defect Location': 'External',
-        'Calculation Status': 'READY',
+        'Calculation Status': 'OK',
         'Error Code': '',
         'Error Message': '',
     },)
+
+
+def test_preview_uses_the_same_qualification_review_status_as_processing():
+    source = workbook_bytes_with_rows([valid_row_values(**{
+        'Operating Temperature [degC]': 150.0,
+    })])
+
+    inspection = inspect_workbook(source)
+    processed = process_workbook(source, processed_at=FIXED_TIME)
+
+    assert inspection.preview[0]['Calculation Status'] == 'REVIEW REQUIRED'
+    assert processed.status_counts == {'REVIEW REQUIRED': 1}
 
 
 def test_missing_batch_information_is_a_workbook_error():
@@ -67,6 +84,15 @@ def test_missing_required_worksheet_is_a_workbook_error(worksheet):
     inspection = inspect_workbook(_saved(workbook))
 
     assert [issue.code for issue in inspection.workbook_errors] == ['MISSING_WORKSHEET']
+
+
+def test_extra_worksheet_is_a_workbook_error():
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook.create_sheet('Unexpected')
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['UNEXPECTED_WORKSHEET']
 
 
 def test_missing_or_duplicate_headings_are_workbook_errors():
@@ -143,6 +169,20 @@ def test_formula_anywhere_in_the_controlled_workbook_is_rejected(worksheet_name,
     assert coordinate in inspection.workbook_errors[0].message
 
 
+@pytest.mark.parametrize('formula', [
+    ArrayFormula(ref='A2', text='=1+1'),
+    DataTableFormula(ref='A2'),
+])
+def test_non_string_excel_formula_objects_are_rejected(formula):
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Batch Input & Results']['A2'].value = formula
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
+    assert 'A2' in inspection.workbook_errors[0].message
+
+
 def test_zip_valid_workbook_with_malformed_xml_is_rejected_safely():
     source = workbook_bytes_with_rows([valid_row_values()])
     malformed = BytesIO()
@@ -154,6 +194,21 @@ def test_zip_valid_workbook_with_malformed_xml_is_rejected_safely():
             output_zip.writestr(entry, content)
 
     inspection = inspect_workbook(malformed.getvalue())
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['UNREADABLE_WORKBOOK']
+
+
+def test_zip_expansion_bomb_is_rejected_before_openpyxl_parsing():
+    source = workbook_bytes_with_rows([valid_row_values()])
+    compressed = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        compressed, 'w', compression=zipfile.ZIP_DEFLATED,
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            output_zip.writestr(entry, input_zip.read(entry.filename))
+        output_zip.writestr('xl/large-compressed-payload.bin', b'x' * (2 * 1024 * 1024))
+
+    inspection = inspect_workbook(compressed.getvalue())
 
     assert [issue.code for issue in inspection.workbook_errors] == ['UNREADABLE_WORKBOOK']
 
@@ -216,11 +271,75 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     assert summary['B25'].value == '68e5409'
 
 
+def test_processed_workbook_records_the_sanitized_uploaded_source_name():
+    source = workbook_bytes_with_rows([valid_row_values()])
+
+    result = process_workbook(
+        source,
+        processed_at=FIXED_TIME,
+        source_name='../../Customer Batch.xlsx',
+    )
+
+    assert _workbook(result.workbook_bytes)['Summary']['B7'].value == 'Customer Batch.xlsx'
+
+
+def test_processing_regenerates_a_clean_workbook_after_a_row_is_cleared():
+    first = process_workbook(workbook_bytes_with_rows([valid_row_values()]), processed_at=FIXED_TIME)
+    edited = _workbook(first.workbook_bytes)
+    data = edited['Batch Input & Results']
+    for column in range(1, len(INPUT_HEADERS) + 1):
+        data.cell(2, column).value = None
+
+    second = process_workbook(_saved(edited), processed_at=FIXED_TIME)
+    cleaned = _workbook(second.workbook_bytes)
+    output_values = [
+        cleaned['Batch Input & Results'].cell(2, column).value
+        for column in range(
+            len(INPUT_HEADERS) + 1,
+            len(INPUT_HEADERS) + len(OUTPUT_HEADERS) + 1,
+        )
+    ]
+
+    assert second.populated_rows == 0
+    assert output_values == [None] * len(output_values)
+
+
+def test_processing_restores_the_trusted_summary_and_instruction_content():
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Summary']['A27'] = 'TAMPERED DISCLAIMER'
+    workbook['Instructions']['A3'] = 'TAMPERED INSTRUCTIONS'
+    workbook['Lists'].sheet_state = 'visible'
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    processed = _workbook(result.workbook_bytes)
+
+    assert 'preliminary screening outputs' in processed['Summary']['A27'].value
+    assert processed['Instructions']['A3'].value.startswith('1. Complete Customer')
+    assert processed['Lists'].sheet_state == 'hidden'
+    assert processed['Batch Input & Results'].protection.sheet is True
+
+
 def test_process_rejects_workbook_level_errors():
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
     workbook['Batch Information']['B3'] = None
     with pytest.raises(WorkbookProcessingError, match='Customer'):
         process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+
+
+def test_unexpected_row_exception_is_logged_with_source_row_only(caplog, monkeypatch):
+    import workbook_processor
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError('synthetic calculation failure')
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', explode)
+    with caplog.at_level('ERROR', logger='workbook_processor'):
+        result = process_workbook(workbook_bytes_with_rows([valid_row_values()]), processed_at=FIXED_TIME)
+
+    assert result.status_counts == {'SYSTEM ERROR': 1}
+    assert 'source Excel row 2' in caplog.text
+    assert 'Batch Customer' not in caplog.text
+    assert '457.2' not in caplog.text
 
 
 def _encrypted_zip_bytes() -> bytes:

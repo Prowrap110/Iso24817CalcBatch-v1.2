@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 import json
-from pathlib import PurePosixPath
+import logging
+from pathlib import Path, PurePosixPath
 import zipfile
 from xml.etree.ElementTree import ParseError
 
@@ -30,6 +31,7 @@ from batch_schema import (
 )
 from batch_status import CalculationStatus
 from batch_validation import validate_batch_info, validate_row
+from workbook_template import create_template_workbook
 
 
 BATCH_ENGINE_VERSION = '1.0.0'
@@ -43,6 +45,12 @@ _REQUIRED_SHEETS = (
     'Lists',
 )
 _PREVIEW_LIMIT = 20
+_MAX_ZIP_ENTRIES = 250
+_MAX_ZIP_UNCOMPRESSED_BYTES = 25 * 1024 * 1024
+_MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
+_MAX_ZIP_COMPRESSION_RATIO = 100
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -78,7 +86,7 @@ class WorkbookProcessingError(ValueError):
 
 
 def inspect_workbook(data: bytes) -> WorkbookInspection:
-    """Validate a controlled upload without changing it or performing calculations."""
+    """Validate a controlled upload and preview the final row classifications."""
     workbook, errors = _load_controlled_workbook(data)
     if errors:
         return _empty_inspection(errors)
@@ -116,11 +124,17 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
             status = CalculationStatus.INPUT_ERROR.value
             error_code = _issue_codes(issues)
             error_message = _issue_message(issues)
-        else:
+        elif batch_info is None:
             valid_rows += 1
             status = 'READY'
             error_code = ''
             error_message = ''
+        else:
+            valid_rows += 1
+            calculation = _calculate_one(batch_info, excel_row, values)
+            status = calculation.status.value
+            error_code = calculation.error_code
+            error_message = calculation.error_message
         if len(preview) < _PREVIEW_LIMIT:
             preview.append({
                 'Source Excel Row': excel_row,
@@ -145,7 +159,11 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     )
 
 
-def process_workbook(data: bytes, processed_at: datetime) -> ProcessedBatch:
+def process_workbook(
+    data: bytes,
+    processed_at: datetime,
+    source_name: str | None = None,
+) -> ProcessedBatch:
     """Return a new workbook with calculation results appended to each populated row."""
     inspection = inspect_workbook(data)
     if inspection.workbook_errors:
@@ -156,7 +174,9 @@ def process_workbook(data: bytes, processed_at: datetime) -> ProcessedBatch:
     if load_errors or workbook is None:  # Defensive: bytes were just inspected.
         raise WorkbookProcessingError(load_errors)
 
-    data_sheet = workbook['Batch Input & Results']
+    output_workbook = load_workbook(BytesIO(create_template_workbook()), data_only=False)
+    _copy_controlled_inputs(workbook, output_workbook)
+    data_sheet = output_workbook['Batch Input & Results']
     status_counts: Counter[str] = Counter()
     processed_timestamp = _utc_timestamp(processed_at)
     for excel_row, values in _populated_rows(data_sheet):
@@ -165,14 +185,15 @@ def process_workbook(data: bytes, processed_at: datetime) -> ProcessedBatch:
         status_counts[calculation.status.value] += 1
 
     _write_summary(
-        workbook,
+        output_workbook,
         inspection.batch_info,
         processed_timestamp,
         inspection.populated_rows,
         status_counts,
+        _sanitized_source_name(source_name),
     )
     output = BytesIO()
-    workbook.save(output)
+    output_workbook.save(output)
     return ProcessedBatch(
         workbook_bytes=output.getvalue(),
         status_counts=dict(status_counts),
@@ -185,6 +206,9 @@ def _load_controlled_workbook(data: bytes):
         return None, (_issue('FILE_TOO_LARGE', 'The uploaded workbook exceeds the 10 MB limit.'),)
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
+            safety_errors = _zip_safety_errors(archive)
+            if safety_errors:
+                return None, safety_errors
             for entry in archive.infolist():
                 if entry.flag_bits & 0x1:
                     return None, (_issue('UNREADABLE_WORKBOOK', 'Password-protected workbooks are not supported.'),)
@@ -207,6 +231,11 @@ def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
     missing = [sheet for sheet in _REQUIRED_SHEETS if sheet not in workbook.sheetnames]
     if missing:
         return (_issue('MISSING_WORKSHEET', f'Missing required worksheet: {missing[0]}.'),)
+    extras = [sheet for sheet in workbook.sheetnames if sheet not in _REQUIRED_SHEETS]
+    if extras:
+        return (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
+    if tuple(workbook.sheetnames) != _REQUIRED_SHEETS:
+        return (_issue('INVALID_WORKSHEET_ORDER', 'Worksheets do not match the controlled template order.'),)
 
     info_sheet = workbook['Batch Information']
     common_headers = tuple(info_sheet.cell(row, 1).value for row in range(3, 6))
@@ -245,7 +274,7 @@ def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
     for worksheet in workbook.worksheets:
         for row in worksheet.iter_rows():
             for cell in row:
-                if _is_formula(cell.value):
+                if _is_formula_cell(cell):
                     return (_issue(
                         'FORMULA_NOT_ALLOWED',
                         f'Formula cells are not allowed: {worksheet.title}!{cell.coordinate}.',
@@ -283,6 +312,7 @@ def _calculate_one(
     try:
         return calculate_row(batch_info, row)
     except Exception:
+        logger.exception('Unexpected calculation exception for source Excel row %s', excel_row)
         return RowCalculation(
             source_excel_row=excel_row,
             status=CalculationStatus.SYSTEM_ERROR,
@@ -313,12 +343,13 @@ def _write_summary(
     timestamp: str,
     populated_rows: int,
     status_counts: Counter[str],
+    source_name: str,
 ) -> None:
     summary = workbook['Summary']
     summary['B3'] = batch_info.customer
     summary['B4'] = batch_info.project_location
     summary['B5'] = batch_info.report_no
-    summary['B7'] = 'PROWRAP Batch Results Workbook'
+    summary['B7'] = source_name
     summary['B8'] = timestamp
     summary['B10'] = populated_rows
     for row, status in enumerate(CalculationStatus, start=13):
@@ -406,6 +437,51 @@ def _is_blank(value: object) -> bool:
 
 def _is_formula(value: object) -> bool:
     return isinstance(value, str) and value.lstrip().startswith('=')
+
+
+def _is_formula_cell(cell) -> bool:
+    return cell.data_type == 'f' or _is_formula(cell.value)
+
+
+def _zip_safety_errors(archive: zipfile.ZipFile) -> tuple[ValidationIssue, ...]:
+    entries = archive.infolist()
+    if len(entries) > _MAX_ZIP_ENTRIES:
+        return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook has too many compressed entries.'),)
+    total_uncompressed = 0
+    for entry in entries:
+        if entry.file_size > _MAX_ZIP_ENTRY_BYTES:
+            return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook has an oversized compressed entry.'),)
+        total_uncompressed += entry.file_size
+        if total_uncompressed > _MAX_ZIP_UNCOMPRESSED_BYTES:
+            return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook expands beyond the safe processing limit.'),)
+        if (
+            entry.file_size > 0
+            and entry.compress_size > 0
+            and entry.file_size / entry.compress_size > _MAX_ZIP_COMPRESSION_RATIO
+        ):
+            return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook has a suspicious compression ratio.'),)
+    return ()
+
+
+def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
+    source_info = source_workbook['Batch Information']
+    output_info = output_workbook['Batch Information']
+    for row in range(3, 6):
+        output_info.cell(row, 2).value = source_info.cell(row, 2).value
+
+    source_data = source_workbook['Batch Input & Results']
+    output_data = output_workbook['Batch Input & Results']
+    for excel_row in range(2, MAX_ROWS + 2):
+        for column in range(1, len(INPUT_HEADERS) + 1):
+            output_data.cell(excel_row, column).value = source_data.cell(excel_row, column).value
+
+
+def _sanitized_source_name(source_name: str | None) -> str:
+    if not source_name:
+        return 'PROWRAP Batch Results Workbook'
+    filename = Path(str(source_name).replace('\\', '/')).name
+    clean = ''.join(character for character in filename if character.isprintable()).strip()
+    return clean or 'PROWRAP Batch Results Workbook'
 
 
 def _is_type_a(method: object) -> bool:

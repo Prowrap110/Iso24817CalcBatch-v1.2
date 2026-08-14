@@ -11,6 +11,7 @@ from engine.prowrap_calculations import (
     calculate_type_a_class3_prowrap_check,
     substrate_credit_bar_for_iso_check,
 )
+from engine.prowrap_materials import PROWRAP
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
             cyclic_derating_factor=values['Cyclic Derating Factor'],
             axial_load_case=values['Axial Load Case'],
             cloth_width_mm=values['Prowrap CF Cloth Width [mm]'],
+            allow_unqualified_temperature=True,
         )
         if _should_run_type_a_check(values, result):
             type_a = calculate_type_a_class3_prowrap_check(
@@ -91,7 +93,10 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
             error_message=str(error),
         )
 
-    extra_warnings = _cloth_width_warnings(values['Prowrap CF Cloth Width [mm]'])
+    extra_warnings = (
+        _cloth_width_warnings(values['Prowrap CF Cloth Width [mm]'])
+        + _type_a_check_warnings(values, result)
+    )
     warnings = tuple(result['compliance_warnings']) + extra_warnings
     status = classify_result(result, extra_warnings)
     outputs = _map_outputs(result, warnings, _should_run_type_a_check(values, result))
@@ -110,7 +115,28 @@ def _should_run_type_a_check(values: dict[str, Any], result: dict[str, Any]) -> 
     return (
         values['Run Type A / Class 3 Check'] == 'Yes'
         and 'Type A' in result['calc_method_thick']
+        and values['Design Pressure [bar]'] > 0
+        and values['Operating Temperature [degC]'] <= PROWRAP['max_temp']
     )
+
+
+def _type_a_check_warnings(values: dict[str, Any], result: dict[str, Any]) -> tuple[str, ...]:
+    if (
+        values['Run Type A / Class 3 Check'] != 'Yes'
+        or 'Type A' not in result['calc_method_thick']
+    ):
+        return ()
+    if values['Design Pressure [bar]'] == 0:
+        return (
+            'Type A / Class 3 check was not run at zero design pressure; '
+            'the check is non-controlling and engineering review is required.',
+        )
+    if values['Operating Temperature [degC]'] > PROWRAP['max_temp']:
+        return (
+            'Type A / Class 3 check was not run above the qualified Prowrap '
+            'temperature limit; engineering review is required.',
+        )
+    return ()
 
 
 def _cloth_width_warnings(cloth_width_mm: float) -> tuple[str, ...]:
