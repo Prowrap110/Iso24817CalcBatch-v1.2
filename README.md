@@ -1,0 +1,46 @@
+# PROWRAP Batch Repair Calculator
+
+Version 1.0.0 is a separate Excel batch calculator for preliminary PROWRAP repair screening. It processes up to 500 independent pipeline-defect rows and returns a new workbook with row-level results appended beside the inputs.
+
+It is deliberately independent from the existing single-case PROWRAP v1.1 calculator. This repository, its deployment, and its URL must never replace, redirect, modify, or be deployed over the v1.1 application.
+
+## Run locally
+
+Use Python 3.11, then install the application dependencies:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+streamlit run app.py
+```
+
+## Use the batch workbook
+
+1. Download the controlled `PROWRAP_Batch_Template.xlsx` from the app.
+2. On **Batch Information**, enter Customer, Project Location, and Report No once.
+3. On **Batch Input & Results**, enter one defect per row, starting with `Pipe OD [mm]`. Do not add, remove, rename, or reorder columns.
+4. Upload the `.xlsx`, review the first 20 rows, calculate, and download the new results workbook.
+
+The template accepts at most 500 populated rows. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns, and the workbook contains no formulas, macros, or VBA.
+
+## Statuses
+
+- `OK` — a valid result with no review warning.
+- `REVIEW REQUIRED` — a result exists, but engineering or product approval is needed.
+- `NOT REPAIRABLE` — the Type B Formula 12 route has no repair solution; do not treat any diagnostic result as an installable design.
+- `INPUT ERROR` — correct the row-level error and recalculate.
+- `SYSTEM ERROR` — retain the workbook and contact PROTAP.
+
+These are preliminary screening outputs. Competent engineering review is required before repair design, approval, procurement, or installation.
+
+## Privacy and file handling
+
+The app processes one controlled `.xlsx` workbook at a time (maximum 10 MB). Uploads and generated files are kept only in the active Streamlit session or temporary processing memory; the application does not create a calculation database or retain customer workbooks. Do not upload macro-enabled, password-protected, or formula-containing workbooks.
+
+## Verify
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
+python3 scripts/create_acceptance_workbook.py /tmp/PROWRAP_Batch_Acceptance.xlsx
+```
+
+The acceptance workbook exercises `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, and a zero-pressure Type B `REVIEW REQUIRED` row.
