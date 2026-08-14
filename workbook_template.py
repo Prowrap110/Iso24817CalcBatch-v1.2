@@ -59,7 +59,10 @@ _HEADER_NOTES = {
     'Component Type': 'Required. Choose Straight, Bend, Tee, Flange, or Reducer.',
     'Cyclic Derating Factor': 'Required. Enter a factor greater than zero and no greater than one.',
     'Axial Load Case': 'Required. Choose 0 for no axial load case or 1 for axial load case.',
-    'Prowrap CF Cloth Width [mm]': 'Required. Enter a cloth width greater than the 50 mm stitch overlap; 300 mm is the approved configured width.',
+    'Prowrap CF Cloth Width [mm]': (
+        'Required. Enter a cloth width greater than the 50 mm stitch overlap; '
+        '300 mm and 500 mm are approved configured widths.'
+    ),
 }
 
 _THIN_GRAY = Side(style='thin', color='D9E1F2')

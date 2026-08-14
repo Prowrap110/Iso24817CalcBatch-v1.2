@@ -37,7 +37,7 @@ from workbook_template import create_template_workbook
 from warning_catalog import warning_meaning
 
 
-BATCH_ENGINE_VERSION = '1.0.0'
+BATCH_ENGINE_VERSION = '1.1.0'
 SOURCE_ENGINE_REVISION = '68e5409'
 _COMMON_HEADERS = ('Customer', 'Project Location', 'Report No')
 _LEGACY_SHEETS = (

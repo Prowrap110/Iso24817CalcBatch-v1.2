@@ -4,6 +4,8 @@ Source: PRW110 Test Data.pdf, ISO 24817:2017 and ASME PCC-2 PROWRAP HPTP
 repair system qualification data.
 """
 
+_GLASS_TRANSITION_TEMP_C = 110.0
+
 PROWRAP = {
     "ply_thickness": 0.83,             # mm, ISO 527-4
     "modulus_circ": 45460,             # MPa, ISO 527-4
@@ -18,7 +20,7 @@ PROWRAP = {
     "shear_modulus": 2450,             # MPa, ASTM D5379
     "shore_d": 79.1,                   # Shore D, measured, ISO 868
     "shore_d_min": 75,                 # Shore D, minimum acceptance for QC
-    "glass_transition_temp": 78.18,    # degC, mid Tg, ISO 11357-2
+    "glass_transition_temp": _GLASS_TRANSITION_TEMP_C,  # degC, approved Tg basis
     "peak_exotherm_temp": 104,         # degC, ISO 11357-2
     "thermal_expansion_circ": 10.34,   # ppm/K, circumferential, ASTM E831
     "thermal_expansion_axial": 22.81,  # ppm/K, axial, ASTM E831
@@ -36,7 +38,7 @@ PROWRAP = {
                                        # revalidation required beyond this
     "impact_peak_energy": 41.982,      # J, ASTM D7136
     "short_term_survival": "PASS",     # ISO 24817
-    "max_temp": 58.18,                 # degC, Tg minus 20 degC design limit
+    "max_temp": _GLASS_TRANSITION_TEMP_C - 20.0,  # degC, Tg minus 20 design limit
     "cloth_width_mm": 300,
     "stitching_overlap_mm": 50,
 }

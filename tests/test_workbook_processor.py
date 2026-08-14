@@ -379,7 +379,7 @@ def test_previous_five_sheet_template_is_accepted_and_upgraded():
 def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     source = workbook_bytes_with_rows([valid_row_values(**{
         'Mechanism': 'Leak',
-        'Design Pressure [bar]': 100.0,
+        'Design Pressure [bar]': 150.0,
     })])
 
     result = process_workbook(source, processed_at=FIXED_TIME)
@@ -397,7 +397,7 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     assert summary['B8'].value == '2026-08-14T12:00:00Z'
     assert summary['B10'].value == 1
     assert summary['B15'].value == 1
-    assert summary['B24'].value == '1.0.0'
+    assert summary['B24'].value == '1.1.0'
     assert summary['B25'].value == '68e5409'
 
 

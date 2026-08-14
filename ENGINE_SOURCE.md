@@ -30,6 +30,11 @@ They do not modify the source repository or the existing v1.1 deployment.
   screening outputs through `allow_unqualified_temperature=True`, adds an
   explicit qualification warning, and returns `REVIEW REQUIRED`; non-batch
   callers retain the strict input rejection.
+- Apply the user-approved PRW110 material basis of Tg = 110 degC. Derive the
+  general qualified design limit as Tg - 20 = 90 degC and the Class 3 Type B
+  limit for service longer than two years as Tg - 30 = 80 degC.
+- Treat both 300 mm and 500 mm Prowrap CF cloth widths as approved batch
+  configurations while retaining the fixed 50 mm stitching overlap.
 
 All other batch orchestration, workbook validation, status handling, and user
 interface code is batch-repository-only. The source repository remains

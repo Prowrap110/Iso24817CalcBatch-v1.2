@@ -149,7 +149,7 @@ def _cloth_width_warnings(cloth_width_mm: float) -> tuple[str, ...]:
         return ()
     return (
         f'Prowrap CF cloth width {cloth_width_mm:g} mm is not an approved '
-        '300 mm configuration; confirm product approval before installation.',
+        '300 mm or 500 mm configuration; confirm product approval before installation.',
     )
 
 
