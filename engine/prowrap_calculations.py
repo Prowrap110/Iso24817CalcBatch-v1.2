@@ -340,6 +340,16 @@ def calculate_repair(
     1 = severed-pipe/guillotine credible or above-ground pipeline
     (Formula 4 pressure end-thrust).
     """
+    allowed_mechanisms = {"Corrosion", "Dent", "Leak", "Crack"}
+    allowed_locations = {"External", "Internal"}
+    allowed_axial_cases = {0, 1}
+    if defect_type not in allowed_mechanisms:
+        raise ValueError(f"Unsupported mechanism: {defect_type}")
+    if defect_loc not in allowed_locations:
+        raise ValueError(f"Unsupported defect location: {defect_loc}")
+    if axial_load_case not in allowed_axial_cases:
+        raise ValueError(f"Unsupported axial load case: {axial_load_case}")
+
     _validate_inputs(
         od,
         wall,
@@ -473,7 +483,7 @@ def calculate_repair(
     # take the maximum thickness.
     type_b_details = None
     if "Type B" in calc_method_thick and pressure_mpa > 0:
-        # Type B service life is capped (5 years for PRW110); the repair
+        # Type B service life is capped at 2 years for PRW110; the repair
         # must be revalidated or replaced beyond that.
         type_b_life = min(design_life, PROWRAP["type_b_max_life_years"])
         t_type_b, type_b_details = iso_type_b_min_thickness(
@@ -571,13 +581,21 @@ def calculate_repair(
                 "This repair is outside the qualified temperature range."
             )
     if "Type B" in calc_method_thick:
-        compliance_warnings.append(
-            "Type B design assumes a circular/near-circular defect of size "
-            f"{type_b_details['defect_size_used_mm']:.0f} mm at END of the "
-            "design life (defect growth must be projected by the assessor). "
-            "Annex F impact-qualified minimum of "
-            f"{PROWRAP['type_b_min_layers']} layers applied."
-        )
+        if type_b_details is None:
+            compliance_warnings.append(
+                "Type B defect at zero design pressure: Formula 12 is "
+                "non-controlling; the impact-qualified three-ply minimum is "
+                "shown and engineering review of the Type B defect "
+                "classification is required."
+            )
+        else:
+            compliance_warnings.append(
+                "Type B design assumes a circular/near-circular defect of size "
+                f"{type_b_details['defect_size_used_mm']:.0f} mm at END of the "
+                "design life (defect growth must be projected by the assessor). "
+                "Annex F impact-qualified minimum of "
+                f"{PROWRAP['type_b_min_layers']} layers applied."
+            )
         if type_b_details is not None and not type_b_details["d_within_validity"]:
             compliance_warnings.append(
                 "Formula 12 validity exceeded: defect size "
@@ -832,4 +850,3 @@ def apply_type_a_class3_result_to_repair(
         }
     )
     return updated
-
