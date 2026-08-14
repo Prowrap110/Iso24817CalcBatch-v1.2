@@ -275,13 +275,12 @@ def _input_header_summary(workbook) -> tuple[tuple[str, ...], tuple[str, ...], t
 
 def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
     for worksheet in workbook.worksheets:
-        for row in worksheet.iter_rows():
-            for cell in row:
-                if _is_formula_cell(cell):
-                    return (_issue(
-                        'FORMULA_NOT_ALLOWED',
-                        f'Formula cells are not allowed: {worksheet.title}!{cell.coordinate}.',
-                    ),)
+        for _, cell in _loaded_cells(worksheet):
+            if _is_formula_cell(cell):
+                return (_issue(
+                    'FORMULA_NOT_ALLOWED',
+                    f'Formula cells are not allowed: {worksheet.title}!{cell.coordinate}.',
+                ),)
     return ()
 
 
@@ -298,14 +297,16 @@ def _populated_rows(worksheet) -> list[tuple[int, dict[str, object]]]:
 
 
 def _out_of_range_input_errors(worksheet) -> tuple[ValidationIssue, ...]:
-    for excel_row in range(MAX_ROWS + 2, worksheet.max_row + 1):
-        for column in range(1, len(INPUT_HEADERS) + 1):
-            if not _is_blank(worksheet.cell(excel_row, column).value):
-                coordinate = worksheet.cell(excel_row, column).coordinate
-                return (_issue(
-                    'INPUT_ROW_OUT_OF_RANGE',
-                    f'Input values are allowed only in rows 2 through {MAX_ROWS + 1}: {coordinate}.',
-                ),)
+    for (excel_row, column), cell in _loaded_cells(worksheet):
+        if (
+            excel_row >= MAX_ROWS + 2
+            and column <= len(INPUT_HEADERS)
+            and not _is_blank(cell.value)
+        ):
+            return (_issue(
+                'INPUT_ROW_OUT_OF_RANGE',
+                f'Input values are allowed only in rows 2 through {MAX_ROWS + 1}: {cell.coordinate}.',
+            ),)
     return ()
 
 
@@ -455,7 +456,18 @@ def _is_formula(value: object) -> bool:
 
 
 def _is_formula_cell(cell) -> bool:
-    return cell.data_type == 'f' or _is_formula(cell.value)
+    return getattr(cell, 'data_type', None) == 'f' or _is_formula(cell.value)
+
+
+def _loaded_cells(worksheet):
+    """Yield parsed cells without expanding sparse worksheet dimensions.
+
+    ``Worksheet.iter_rows()`` allocates every coordinate in the declared
+    worksheet dimension.  This private openpyxl collection is deliberately
+    isolated here so validation examines only cells that were actually loaded
+    from the workbook, including far-away formula and input cells.
+    """
+    return sorted(worksheet._cells.items())
 
 
 def _zip_safety_errors(archive: zipfile.ZipFile) -> tuple[ValidationIssue, ...]:

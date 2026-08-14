@@ -6,7 +6,7 @@ import pytest
 from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
-from batch_schema import INPUT_HEADERS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
+from batch_schema import INPUT_HEADERS, MAX_ROWS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
 from tests.helpers import valid_row_values, workbook_bytes_with_rows
 from workbook_processor import (
     WorkbookProcessingError,
@@ -183,6 +183,24 @@ def test_non_string_excel_formula_objects_are_rejected(formula):
     assert 'A2' in inspection.workbook_errors[0].message
 
 
+def test_formula_scan_uses_loaded_cells_without_dense_worksheet_iteration(monkeypatch):
+    import workbook_processor
+
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Summary'].cell(1_048_576, 16_384).value = '=1+1'
+    for worksheet in workbook.worksheets:
+        monkeypatch.setattr(
+            worksheet,
+            'iter_rows',
+            lambda: (_ for _ in ()).throw(AssertionError('dense iteration used')),
+        )
+
+    issues = workbook_processor._formula_errors(workbook)
+
+    assert [issue.code for issue in issues] == ['FORMULA_NOT_ALLOWED']
+    assert 'Summary!XFD1048576' in issues[0].message
+
+
 def test_zip_valid_workbook_with_malformed_xml_is_rejected_safely():
     source = workbook_bytes_with_rows([valid_row_values()])
     malformed = BytesIO()
@@ -231,6 +249,30 @@ def test_populated_input_beyond_controlled_rows_is_a_workbook_error(excel_row):
 
     assert [issue.code for issue in inspection.workbook_errors] == ['INPUT_ROW_OUT_OF_RANGE']
     assert f'A{excel_row}' in inspection.workbook_errors[0].message
+
+
+def test_far_input_scan_uses_loaded_cells_without_max_row_iteration(monkeypatch):
+    import workbook_processor
+
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    data = workbook['Batch Input & Results']
+    data.cell(1_048_576, 1).value = 508.0
+    monkeypatch.setattr(type(data), 'max_row', property(lambda _worksheet: MAX_ROWS + 1))
+
+    issues = workbook_processor._out_of_range_input_errors(data)
+
+    assert [issue.code for issue in issues] == ['INPUT_ROW_OUT_OF_RANGE']
+    assert 'A1048576' in issues[0].message
+
+
+def test_formula_issue_has_priority_over_far_input_row_issue():
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Batch Input & Results'].cell(1_048_576, 1).value = 508.0
+    workbook['Summary'].cell(1_048_576, 16_384).value = '=1+1'
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
 
 
 def test_exactly_500_controlled_rows_remain_valid():

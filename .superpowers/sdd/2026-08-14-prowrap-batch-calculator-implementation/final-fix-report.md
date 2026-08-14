@@ -14,6 +14,9 @@
   before processing, so no defect can be silently omitted from regenerated output.
 - ZIP metadata is checked before `openpyxl` parsing: entry count, individual
   and total expanded bytes, and compression ratio limits reject unsafe input.
+- Workbook cell validation inspects only cells actually loaded by openpyxl,
+  rather than expanding the worksheet's declared dimension; sparse far-away
+  cells therefore cannot exhaust processing resources.
 - Unexpected row exceptions are logged with `logger.exception` and only the
   source Excel row number.  User/common input values are not logged.
 
@@ -43,12 +46,14 @@
   exception logging are covered.
 - Row 502/far-row rejection, an exact 500-row valid batch, and all leading
   formula-style filename prefixes are covered.
+- Sparse `Summary!XFD1048576` formulas and far input cells are rejected without
+  dense iteration; formula rejection deterministically takes priority.
 
 ## Verification
 
 - `python3 -m pytest tests/engine tests/test_app_smoke.py tests/test_batch_status.py tests/test_batch_validation.py tests/test_full_batch_acceptance.py -q` — 80 passed.
-- `python3 -m pytest tests/test_workbook_processor.py -k 'not (one_invalid or processed_workbook or processing_regenerates or processing_restores or process_rejects or unexpected_row_exception)' -q` — 23 passed.
+- `python3 -m pytest tests/test_workbook_processor.py -k 'not (one_invalid or processed_workbook or processing_regenerates or processing_restores or process_rejects or unexpected_row_exception)' -q` — 26 passed.
 - `python3 -m pytest tests/test_workbook_processor.py -k 'one_invalid or processed_workbook or processing_regenerates or processing_restores or process_rejects or unexpected_row_exception' -q` — 12 passed.
 - `python3 -m pytest tests/test_batch_adapter.py tests/test_workbook_template.py tests/test_batch_schema.py tests/test_engine_batch_hardening.py tests/test_engine_snapshot.py -q` — 21 passed.
 
-These non-overlapping checks cover the complete 136-test suite.
+These non-overlapping checks cover the complete 139-test suite.
