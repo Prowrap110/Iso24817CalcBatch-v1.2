@@ -1,0 +1,87 @@
+"""Create the controlled five-row workbook used for batch acceptance checks."""
+
+from __future__ import annotations
+
+import argparse
+from io import BytesIO
+from pathlib import Path
+import sys
+
+from openpyxl import load_workbook
+
+
+if __package__ in {None, ''}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from batch_schema import INPUT_HEADERS
+from workbook_template import create_template_workbook
+
+
+_COMMON_VALUES = {
+    'Customer': 'Acceptance Customer',
+    'Project Location': 'Acceptance Location',
+    'Report No': 'ACCEPT-001',
+}
+
+_BASELINE_ROW = {
+    'Pipe OD [mm]': 457.2,
+    'Nominal Wall [mm]': 9.53,
+    'Pipe Yield [MPa]': 359.0,
+    'Design Pressure [bar]': 50.0,
+    'Operating Temperature [degC]': 40.0,
+    'Mechanism': 'Corrosion',
+    'Defect Location': 'External',
+    'Defect Length [mm]': 100.0,
+    'Remaining Wall [mm]': 4.5,
+    'Internal Corrosion Rate [mm/year]': None,
+    'Design Life [years]': 20,
+    'Design Factor': 0.72,
+    'Run Type A / Class 3 Check': 'No',
+    'Installation Temperature [degC]': 20.0,
+    'Component Type': 'Straight',
+    'Cyclic Derating Factor': 1.0,
+    'Axial Load Case': 0,
+    'Prowrap CF Cloth Width [mm]': 300.0,
+}
+
+
+def create_acceptance_workbook(destination: str | Path) -> Path:
+    """Write the fixed acceptance input workbook to the requested destination only."""
+    path = Path(destination)
+    workbook = load_workbook(BytesIO(create_template_workbook()))
+    try:
+        info = workbook['Batch Information']
+        for row, label in enumerate(_COMMON_VALUES, start=3):
+            info.cell(row, 2).value = _COMMON_VALUES[label]
+
+        data = workbook['Batch Input & Results']
+        for excel_row, values in enumerate(_acceptance_rows(), start=2):
+            for column, header in enumerate(INPUT_HEADERS, start=1):
+                data.cell(excel_row, column).value = values[header]
+        workbook.save(path)
+    finally:
+        workbook.close()
+    return path
+
+
+def _acceptance_rows() -> tuple[dict[str, object], ...]:
+    return (
+        _BASELINE_ROW,
+        {**_BASELINE_ROW, 'Prowrap CF Cloth Width [mm]': 250.0},
+        {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 100.0},
+        {**_BASELINE_ROW, 'Remaining Wall [mm]': 12.0},
+        {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 0.0},
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Create the five-row PROWRAP Batch acceptance workbook.',
+    )
+    parser.add_argument('destination', type=Path, help='Path for the generated .xlsx workbook.')
+    args = parser.parse_args()
+    create_acceptance_workbook(args.destination)
+
+
+if __name__ == '__main__':
+    main()
