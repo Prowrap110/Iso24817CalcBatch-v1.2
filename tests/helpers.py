@@ -11,3 +11,28 @@ def valid_engine_inputs(**overrides):
     )
     values.update(overrides)
     return values
+
+
+def valid_row_values(**overrides):
+    values = {
+        'Pipe OD [mm]': 457.2,
+        'Nominal Wall [mm]': 9.53,
+        'Pipe Yield [MPa]': 359.0,
+        'Design Pressure [bar]': 50.0,
+        'Operating Temperature [degC]': 40.0,
+        'Mechanism': 'Corrosion',
+        'Defect Location': 'External',
+        'Defect Length [mm]': 100.0,
+        'Remaining Wall [mm]': 4.5,
+        'Internal Corrosion Rate [mm/year]': None,
+        'Design Life [years]': 20,
+        'Design Factor': 0.72,
+        'Run Type A / Class 3 Check': 'No',
+        'Installation Temperature [degC]': 20.0,
+        'Component Type': 'Straight',
+        'Cyclic Derating Factor': 1.0,
+        'Axial Load Case': 0,
+        'Prowrap CF Cloth Width [mm]': 300.0,
+    }
+    values.update(overrides)
+    return values
