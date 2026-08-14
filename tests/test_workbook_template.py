@@ -63,6 +63,17 @@ def test_template_adds_dropdowns_for_every_selection_through_row_501():
     assert validations == expected_choices
 
 
+def test_template_dropdowns_reject_invalid_selections_but_allow_unused_blank_rows():
+    """Catches validations that block a blank unused row or silently accept bad selections."""
+    workbook = _template_workbook()
+    data = workbook['Batch Input & Results']
+    validations = data.data_validations.dataValidation
+
+    assert all(validation.showErrorMessage is True for validation in validations)
+    assert all(validation.errorStyle == 'stop' for validation in validations)
+    assert all(validation.allow_blank is True for validation in validations)
+
+
 def test_template_marks_inputs_editable_and_outputs_protected_with_clear_headers():
     """Catches output cells that are editable or visually indistinguishable from inputs."""
     workbook = _template_workbook()

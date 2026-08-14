@@ -40,7 +40,6 @@ def apply_common_field_style(label_cell, value_cell) -> None:
 def unlock_cells(cells) -> None:
     """Mark editable worksheet cells unlocked while preserving their style."""
     for cell in cells:
-        cell.protection = copy(cell.protection)
         cell.protection = Protection(locked=False, hidden=cell.protection.hidden)
 
 

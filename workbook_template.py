@@ -5,7 +5,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import Rule
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.styles.differential import DifferentialStyle
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
@@ -13,16 +13,16 @@ from openpyxl.workbook.defined_name import DefinedName
 
 from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
 from workbook_formatting import (
-    COMMON_FIELD_COLOR,
+    HEADER_HEIGHT,
     INPUT_ERROR_COLOR,
     INPUT_HEADER_COLOR,
     NOT_REPAIRABLE_COLOR,
     OK_COLOR,
+    OUTPUT_HEADER_COLOR,
     REVIEW_REQUIRED_COLOR,
     SYSTEM_ERROR_COLOR,
     apply_common_field_style,
     apply_header_style,
-    apply_wrapped_text,
     set_capped_column_widths,
     unlock_cells,
 )
@@ -107,11 +107,13 @@ def _build_data_sheet(worksheet) -> None:
     input_count = len(INPUT_HEADERS)
     for column, header in enumerate(headers, start=1):
         cell = worksheet.cell(1, column, header)
-        apply_header_style(cell, INPUT_HEADER_COLOR if column <= input_count else '404040')
+        apply_header_style(
+            cell, INPUT_HEADER_COLOR if column <= input_count else OUTPUT_HEADER_COLOR,
+        )
         if column <= input_count:
             cell.comment = Comment(_HEADER_NOTES[header], 'PROTAP')
 
-    worksheet.row_dimensions[1].height = 42
+    worksheet.row_dimensions[1].height = HEADER_HEIGHT
     worksheet.freeze_panes = 'A2'
     end_column = worksheet.cell(1, len(headers)).coordinate.rstrip('1')
     table_ref = f'A1:{end_column}{MAX_ROWS + 1}'
@@ -221,9 +223,11 @@ def _add_dropdowns(worksheet) -> None:
         column = INPUT_HEADERS.index(header) + 1
         letter = worksheet.cell(1, column).column_letter
         validation = DataValidation(
-            type='list', formula1=f'={name}', allow_blank=False,
+            type='list', formula1=f'={name}', allow_blank=True,
             errorTitle='Select a supported value',
             error='Choose a value from the controlled list.',
+            showErrorMessage=True,
+            errorStyle='stop',
         )
         validation.add(f'{letter}2:{letter}{MAX_ROWS + 1}')
         worksheet.add_data_validation(validation)
