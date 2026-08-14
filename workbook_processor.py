@@ -403,7 +403,7 @@ def _output_value(heading: str, value: object) -> object:
     if heading in {'B31G Detail', 'Type A Detail', 'Type B Detail'}:
         return json.dumps(value, sort_keys=True, separators=(',', ':'), default=str)
     if heading == 'Compliance Warnings' and isinstance(value, (tuple, list)):
-        return '\n'.join(str(item) for item in value)
+        return ', '.join(str(item) for item in value)
     return value
 
 

@@ -36,8 +36,7 @@ def test_unapproved_cloth_width_calculates_but_requires_review():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.outputs['Installed Plies'] == 3
-    assert any('250' in warning and 'approval' in warning.lower()
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert outcome.outputs['Compliance Warnings'] == ('W018',)
 
 
 def test_temperature_above_qualification_limit_becomes_review_required():
@@ -47,8 +46,7 @@ def test_temperature_above_qualification_limit_becomes_review_required():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.error_message == ''
-    assert any('150.0 degC exceeds the qualified Prowrap limit' in warning
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert 'W001' in outcome.outputs['Compliance Warnings']
 
 
 def test_zero_pressure_type_a_check_is_skipped_and_requires_review():
@@ -59,5 +57,4 @@ def test_zero_pressure_type_a_check_is_skipped_and_requires_review():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.outputs['Type A / Class 3 Check Run'] is False
-    assert any('zero design pressure' in warning.lower()
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert outcome.outputs['Compliance Warnings'] == ('W019',)
