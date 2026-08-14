@@ -328,6 +328,54 @@ def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
     assert data['T4'].value == 'OK'
 
 
+def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
+    """Catches repeated long warning text or one legend entry per defect row."""
+    source = workbook_bytes_with_rows([
+        valid_row_values(**{'Prowrap CF Cloth Width [mm]': 250.0}),
+        valid_row_values(**{'Prowrap CF Cloth Width [mm]': 250.0}),
+    ])
+
+    result = process_workbook(source, processed_at=FIXED_TIME)
+    workbook = _workbook(result.workbook_bytes)
+    data = workbook['Batch Input & Results']
+    warnings = workbook['Warnings']
+
+    assert data['W2'].value == 'W018'
+    assert data['W3'].value == 'W018'
+    assert warnings['A4'].value == 'W018'
+    assert '300 mm or 500 mm' in warnings['B4'].value
+    assert warnings['C4'].value == '2, 3'
+    assert list(warnings.tables) == ['WarningRegister']
+    assert warnings.tables['WarningRegister'].ref == 'A3:C4'
+
+
+def test_processed_workbook_keeps_clear_no_warning_register_state():
+    """Catches an empty warning sheet that looks broken or unfinished."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    warnings = _workbook(result.workbook_bytes)['Warnings']
+
+    assert warnings['A4'].value == 'No compliance warnings were generated.'
+    assert not warnings.tables
+
+
+def test_previous_five_sheet_template_is_accepted_and_upgraded():
+    """Catches a release that strands users holding the previous template."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    del workbook['Warnings']
+
+    inspection = inspect_workbook(_saved(workbook))
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+
+    assert inspection.workbook_errors == ()
+    assert _workbook(result.workbook_bytes).sheetnames == [
+        'Batch Information', 'Batch Input & Results', 'Warnings',
+        'Summary', 'Instructions', 'Lists',
+    ]
+
+
 def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     source = workbook_bytes_with_rows([valid_row_values(**{
         'Mechanism': 'Leak',

@@ -71,12 +71,14 @@ def create_template_workbook() -> bytes:
     batch_info = workbook.active
     batch_info.title = 'Batch Information'
     data = workbook.create_sheet('Batch Input & Results')
+    warnings = workbook.create_sheet('Warnings')
     summary = workbook.create_sheet('Summary')
     instructions = workbook.create_sheet('Instructions')
     lists = workbook.create_sheet('Lists')
 
     _build_batch_information(batch_info)
     _build_data_sheet(data)
+    _build_warnings(warnings)
     _build_summary(summary)
     _build_instructions(instructions)
     _build_lists(workbook, lists)
@@ -145,6 +147,38 @@ def _build_data_sheet(worksheet) -> None:
     set_capped_column_widths(worksheet)
     for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
         worksheet.column_dimensions[column].width = 28
+    worksheet.column_dimensions['W'].width = 16
+
+
+def _build_warnings(worksheet) -> None:
+    worksheet['A1'] = 'Compliance Warning Register'
+    worksheet['A1'].font = Font(
+        name='Calibri', size=16, bold=True, color=INPUT_HEADER_COLOR,
+    )
+    worksheet['A2'] = (
+        'Permanent warning references used in Batch Input & Results. '
+        'Affected Excel rows use the original worksheet row numbers.'
+    )
+    worksheet['A2'].alignment = Alignment(wrap_text=True, vertical='top')
+    headings = (
+        'Warning Code',
+        'Warning Meaning / Required Action',
+        'Affected Excel Rows',
+    )
+    for column, heading in enumerate(headings, start=1):
+        apply_header_style(worksheet.cell(3, column, heading), OUTPUT_HEADER_COLOR)
+    worksheet['A4'] = 'No compliance warnings were generated.'
+    worksheet['A4'].font = Font(name='Calibri', italic=True, color='666666')
+    worksheet['A4'].alignment = Alignment(vertical='top')
+    worksheet.freeze_panes = 'A4'
+    worksheet.sheet_view.showGridLines = False
+    worksheet.column_dimensions['A'].width = 16
+    worksheet.column_dimensions['B'].width = 90
+    worksheet.column_dimensions['C'].width = 28
+    worksheet.row_dimensions[2].height = 32
+    worksheet.row_dimensions[3].height = HEADER_HEIGHT
+    worksheet.protection.sheet = True
+    worksheet.protection.selectLockedCells = False
 
 
 def _build_summary(worksheet) -> None:
