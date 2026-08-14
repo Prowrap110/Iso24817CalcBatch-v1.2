@@ -12,6 +12,7 @@ from engine.prowrap_calculations import (
     substrate_credit_bar_for_iso_check,
 )
 from engine.prowrap_materials import PROWRAP
+from warning_catalog import warning_codes
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,11 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
     )
     warnings = tuple(result['compliance_warnings']) + extra_warnings
     status = classify_result(result, extra_warnings)
-    outputs = _map_outputs(result, warnings, _should_run_type_a_check(values, result))
+    outputs = _map_outputs(
+        result,
+        warning_codes(warnings),
+        _should_run_type_a_check(values, result),
+    )
     if status is CalculationStatus.NOT_REPAIRABLE:
         for heading in _INSTALLABLE_OUTPUTS:
             outputs[heading] = None
@@ -144,7 +149,7 @@ def _cloth_width_warnings(cloth_width_mm: float) -> tuple[str, ...]:
         return ()
     return (
         f'Prowrap CF cloth width {cloth_width_mm:g} mm is not an approved '
-        '300 mm configuration; confirm product approval before installation.',
+        '300 mm or 500 mm configuration; confirm product approval before installation.',
     )
 
 

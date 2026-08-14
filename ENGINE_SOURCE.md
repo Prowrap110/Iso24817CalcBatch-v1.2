@@ -1,6 +1,6 @@
 # Pinned calculation-engine source
 
-**Batch release version:** `1.0.0`
+**Batch release version:** `1.1.0`
 
 The calculation engine in this repository was copied from
 [`Prowrap110/Iso24817Calcv1.1`](https://github.com/Prowrap110/Iso24817Calcv1.1)
@@ -12,6 +12,13 @@ The copied modules are:
 - `iso24817_typea_class3.py`
 - `prowrap_calculations.py`
 - `prowrap_materials.py`
+
+## Shared approved material-basis change
+
+The user-approved PRW110 material basis is Tg = 110 degC in both this batch
+release and the separately deployed v1.1 calculator. Both derive the general
+qualified design limit as Tg - 20 = 90 degC and the Class 3 Type B limit for
+service longer than two years as Tg - 30 = 80 degC.
 
 ## Intentional batch-only corrections
 
@@ -30,7 +37,10 @@ They do not modify the source repository or the existing v1.1 deployment.
   screening outputs through `allow_unqualified_temperature=True`, adds an
   explicit qualification warning, and returns `REVIEW REQUIRED`; non-batch
   callers retain the strict input rejection.
+- Treat both 300 mm and 500 mm Prowrap CF cloth widths as approved batch
+  configurations while retaining the fixed 50 mm stitching overlap.
 
-All other batch orchestration, workbook validation, status handling, and user
-interface code is batch-repository-only. The source repository remains
-read-only.
+All batch orchestration, workbook validation, warning-register handling,
+status handling, and batch user-interface code is batch-repository-only. The
+separately authorized v1.1 release receives only the Tg 110 degC material-basis
+change and its derived temperature behavior.

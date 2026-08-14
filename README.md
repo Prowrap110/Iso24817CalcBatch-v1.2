@@ -1,6 +1,6 @@
 # PROWRAP Batch Repair Calculator
 
-Version 1.0.0 is a separate Excel batch calculator for preliminary PROWRAP repair screening. It processes up to 500 independent pipeline-defect rows and returns a new workbook with row-level results appended beside the inputs.
+Version 1.1.0 is a separate Excel batch calculator for preliminary PROWRAP repair screening. It processes up to 500 independent pipeline-defect rows and returns a new workbook with row-level results appended beside the inputs.
 
 It is deliberately independent from the existing single-case PROWRAP v1.1 calculator. This repository, its deployment, and its URL must never replace, redirect, modify, or be deployed over the v1.1 application.
 
@@ -21,6 +21,12 @@ streamlit run app.py
 4. Upload the `.xlsx`, review the first 20 rows, calculate, and download the new results workbook.
 
 The template accepts at most 500 populated rows. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns, and the workbook contains no formulas, macros, or VBA.
+
+Processed defect rows show only permanent references such as `W003, W006` in the `Compliance Warnings` column. The separate **Warnings** worksheet gives each code's full meaning, required action, and affected source-row numbers. Repeated warnings share one permanent code and one consolidated register entry.
+
+Prowrap CF cloth widths of **300 mm and 500 mm** are approved configurations in this batch release; both continue to use the fixed 50 mm stitch overlap. The approved material basis is **Tg = 110 degC**, giving a general qualified design-temperature limit of **90 degC** and a long-life Class 3 Type B limit of **80 degC**.
+
+Previously downloaded controlled five-sheet templates remain accepted. Processing upgrades them to the current six-sheet output containing the Warnings register.
 
 ## Statuses
 
@@ -43,4 +49,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
 python3 scripts/create_acceptance_workbook.py /tmp/PROWRAP_Batch_Acceptance.xlsx
 ```
 
-The acceptance workbook exercises `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, and a zero-pressure Type B `REVIEW REQUIRED` row.
+The six-row acceptance workbook exercises `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, a zero-pressure Type B `REVIEW REQUIRED` row, repeated permanent warning references, and a warning-free 500 mm cloth row.

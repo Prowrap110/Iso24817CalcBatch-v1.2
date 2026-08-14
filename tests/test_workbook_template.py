@@ -17,7 +17,7 @@ def test_template_has_common_info_and_row_table():
 
     assert workbook.sheetnames == [
         'Batch Information', 'Batch Input & Results',
-        'Summary', 'Instructions', 'Lists',
+        'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
     info = workbook['Batch Information']
     assert [info['A3'].value, info['A4'].value, info['A5'].value] == [
@@ -29,6 +29,42 @@ def test_template_has_common_info_and_row_table():
     assert data['A1'].value == 'Pipe OD [mm]'
     assert data.freeze_panes == 'B2'
     assert workbook['Lists'].sheet_state == 'hidden'
+
+
+def test_template_has_a_visible_protected_warning_register_with_empty_state():
+    """Catches a template that leaves long warning explanations in result rows."""
+    workbook = _template_workbook()
+    warnings = workbook['Warnings']
+
+    assert warnings.sheet_state == 'visible'
+    assert warnings['A1'].value == 'Compliance Warning Register'
+    assert [warnings.cell(3, column).value for column in range(1, 4)] == [
+        'Warning Code',
+        'Warning Meaning / Required Action',
+        'Affected Excel Rows',
+    ]
+    assert warnings['A4'].value == 'No compliance warnings were generated.'
+    assert warnings.freeze_panes == 'A4'
+    assert warnings.protection.sheet is True
+    assert not warnings.tables
+
+
+def test_warning_register_subtitle_spans_the_table_without_clipping():
+    """Catches a wrapped subtitle constrained to the narrow code column."""
+    warnings = _template_workbook()['Warnings']
+
+    assert 'A2:C2' in {str(cell_range) for cell_range in warnings.merged_cells.ranges}
+    assert warnings.row_dimensions[2].height >= 32
+
+
+def test_diagnostic_detail_columns_do_not_expand_result_rows():
+    """Catches wrapped diagnostic JSON making each result row extremely tall."""
+    data = _template_workbook()['Batch Input & Results']
+
+    for heading in ('B31G Detail', 'Type A Detail', 'Type B Detail'):
+        column = list(INPUT_HEADERS + OUTPUT_HEADERS).index(heading) + 1
+        assert data.cell(2, column).alignment.wrap_text is not True
+        assert data.cell(2, column).alignment.shrink_to_fit is True
 
 
 def test_template_uses_canonical_headings_and_a_filterable_500_row_table():
@@ -127,6 +163,15 @@ def test_template_contains_no_formulas_and_has_user_guidance():
         for cell in row
         if cell.value is not None
     )
+    instruction_text = ' '.join(
+        str(cell.value).lower()
+        for row in instructions.iter_rows()
+        for cell in row
+        if cell.value is not None
+    )
+    assert 'warnings worksheet' in instruction_text
+    assert '300 mm and 500 mm' in instruction_text
+    assert 'tg = 110' in instruction_text
     assert 'preliminary screening' in ' '.join(
         str(cell.value).lower()
         for row in summary.iter_rows()

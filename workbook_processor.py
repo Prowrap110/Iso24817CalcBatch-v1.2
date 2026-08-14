@@ -14,6 +14,8 @@ from xml.etree.ElementTree import ParseError
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
+from openpyxl.styles import Alignment, Border, Font
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 try:  # openpyxl uses lxml when it is available.
     from lxml.etree import XMLSyntaxError
@@ -32,14 +34,23 @@ from batch_schema import (
 from batch_status import CalculationStatus
 from batch_validation import validate_batch_info, validate_row
 from workbook_template import create_template_workbook
+from warning_catalog import warning_meaning
 
 
-BATCH_ENGINE_VERSION = '1.0.0'
+BATCH_ENGINE_VERSION = '1.1.0'
 SOURCE_ENGINE_REVISION = '68e5409'
 _COMMON_HEADERS = ('Customer', 'Project Location', 'Report No')
-_REQUIRED_SHEETS = (
+_LEGACY_SHEETS = (
     'Batch Information',
     'Batch Input & Results',
+    'Summary',
+    'Instructions',
+    'Lists',
+)
+_CURRENT_SHEETS = (
+    'Batch Information',
+    'Batch Input & Results',
+    'Warnings',
     'Summary',
     'Instructions',
     'Lists',
@@ -187,6 +198,7 @@ def process_workbook(
         _write_result_row(data_sheet, excel_row, calculation, processed_timestamp)
         status_counts[calculation.status.value] += 1
 
+    _write_warnings_sheet(output_workbook)
     _write_summary(
         output_workbook,
         inspection.batch_info,
@@ -231,13 +243,13 @@ def _load_controlled_workbook(data: bytes):
 
 
 def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
-    missing = [sheet for sheet in _REQUIRED_SHEETS if sheet not in workbook.sheetnames]
+    missing = [sheet for sheet in _LEGACY_SHEETS if sheet not in workbook.sheetnames]
     if missing:
         return (_issue('MISSING_WORKSHEET', f'Missing required worksheet: {missing[0]}.'),)
-    extras = [sheet for sheet in workbook.sheetnames if sheet not in _REQUIRED_SHEETS]
+    extras = [sheet for sheet in workbook.sheetnames if sheet not in _CURRENT_SHEETS]
     if extras:
         return (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
-    if tuple(workbook.sheetnames) != _REQUIRED_SHEETS:
+    if tuple(workbook.sheetnames) not in {_LEGACY_SHEETS, _CURRENT_SHEETS}:
         return (_issue('INVALID_WORKSHEET_ORDER', 'Worksheets do not match the controlled template order.'),)
 
     info_sheet = workbook['Batch Information']
@@ -353,6 +365,51 @@ def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, ti
         worksheet.cell(excel_row, column).value = _output_value(heading, outputs.get(heading))
 
 
+def _write_warnings_sheet(workbook) -> None:
+    """Build one consolidated, permanent warning register for the batch."""
+    warnings_sheet = workbook['Warnings']
+    data_sheet = workbook['Batch Input & Results']
+    warning_column = len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Compliance Warnings') + 1
+    source_row_column = len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Source Excel Row') + 1
+    affected_rows: dict[str, list[int]] = {}
+    for excel_row, _ in _populated_rows(data_sheet):
+        value = data_sheet.cell(excel_row, warning_column).value
+        if not isinstance(value, str) or not value.strip():
+            continue
+        source_row = data_sheet.cell(excel_row, source_row_column).value
+        for code in (item.strip() for item in value.split(',')):
+            if not code:
+                continue
+            warning_meaning(code)
+            rows = affected_rows.setdefault(code, [])
+            if source_row not in rows:
+                rows.append(source_row)
+
+    if not affected_rows:
+        return
+
+    warnings_sheet['A4'] = None
+    for output_row, code in enumerate(sorted(affected_rows), start=4):
+        warnings_sheet.cell(output_row, 1, code)
+        warnings_sheet.cell(output_row, 2, warning_meaning(code))
+        warnings_sheet.cell(
+            output_row, 3, ', '.join(str(row) for row in sorted(affected_rows[code])),
+        )
+        for column in range(1, 4):
+            cell = warnings_sheet.cell(output_row, column)
+            cell.alignment = Alignment(vertical='top', wrap_text=column == 2)
+            cell.border = Border(bottom=data_sheet['A2'].border.bottom)
+            cell.font = Font(name='Calibri', size=11, color='000000')
+
+    last_row = 3 + len(affected_rows)
+    table = Table(displayName='WarningRegister', ref=f'A3:C{last_row}')
+    table.tableStyleInfo = TableStyleInfo(
+        name='TableStyleMedium2', showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True, showColumnStripes=False,
+    )
+    warnings_sheet.add_table(table)
+
+
 def _write_summary(
     workbook,
     batch_info: BatchInfo,
@@ -403,7 +460,7 @@ def _output_value(heading: str, value: object) -> object:
     if heading in {'B31G Detail', 'Type A Detail', 'Type B Detail'}:
         return json.dumps(value, sort_keys=True, separators=(',', ':'), default=str)
     if heading == 'Compliance Warnings' and isinstance(value, (tuple, list)):
-        return '\n'.join(str(item) for item in value)
+        return ', '.join(str(item) for item in value)
     return value
 
 

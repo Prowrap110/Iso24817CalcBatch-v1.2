@@ -59,7 +59,10 @@ _HEADER_NOTES = {
     'Component Type': 'Required. Choose Straight, Bend, Tee, Flange, or Reducer.',
     'Cyclic Derating Factor': 'Required. Enter a factor greater than zero and no greater than one.',
     'Axial Load Case': 'Required. Choose 0 for no axial load case or 1 for axial load case.',
-    'Prowrap CF Cloth Width [mm]': 'Required. Enter a cloth width greater than the 50 mm stitch overlap; 300 mm is the approved configured width.',
+    'Prowrap CF Cloth Width [mm]': (
+        'Required. Enter a cloth width greater than the 50 mm stitch overlap; '
+        '300 mm and 500 mm are approved configured widths.'
+    ),
 }
 
 _THIN_GRAY = Side(style='thin', color='D9E1F2')
@@ -71,12 +74,14 @@ def create_template_workbook() -> bytes:
     batch_info = workbook.active
     batch_info.title = 'Batch Information'
     data = workbook.create_sheet('Batch Input & Results')
+    warnings = workbook.create_sheet('Warnings')
     summary = workbook.create_sheet('Summary')
     instructions = workbook.create_sheet('Instructions')
     lists = workbook.create_sheet('Lists')
 
     _build_batch_information(batch_info)
     _build_data_sheet(data)
+    _build_warnings(warnings)
     _build_summary(summary)
     _build_instructions(instructions)
     _build_lists(workbook, lists)
@@ -135,7 +140,14 @@ def _build_data_sheet(worksheet) -> None:
             cell = worksheet.cell(row, column)
             cell.border = Border(bottom=_THIN_GRAY)
             if column >= input_count + 1:
-                cell.alignment = Alignment(vertical='top', wrap_text=True)
+                is_diagnostic_detail = headers[column - 1] in {
+                    'B31G Detail', 'Type A Detail', 'Type B Detail',
+                }
+                cell.alignment = Alignment(
+                    vertical='top',
+                    wrap_text=not is_diagnostic_detail,
+                    shrink_to_fit=is_diagnostic_detail,
+                )
 
     _add_dropdowns(worksheet)
     _add_status_formatting(worksheet, input_count + 2)
@@ -145,6 +157,40 @@ def _build_data_sheet(worksheet) -> None:
     set_capped_column_widths(worksheet)
     for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
         worksheet.column_dimensions[column].width = 28
+    worksheet.column_dimensions['W'].width = 16
+
+
+def _build_warnings(worksheet) -> None:
+    worksheet['A1'] = 'Compliance Warning Register'
+    worksheet['A1'].font = Font(
+        name='Calibri', size=16, bold=True, color=INPUT_HEADER_COLOR,
+    )
+    worksheet['A2'] = (
+        'Permanent warning references used in Batch Input & Results. '
+        'Affected Excel rows use the original worksheet row numbers.'
+    )
+    worksheet.merge_cells('A2:C2')
+    worksheet['A2'].alignment = Alignment(wrap_text=True, vertical='top')
+    headings = (
+        'Warning Code',
+        'Warning Meaning / Required Action',
+        'Affected Excel Rows',
+    )
+    for column, heading in enumerate(headings, start=1):
+        apply_header_style(worksheet.cell(3, column, heading), OUTPUT_HEADER_COLOR)
+    worksheet['A4'] = 'No compliance warnings were generated.'
+    worksheet['A4'].font = Font(name='Calibri', italic=True, color='666666')
+    worksheet['A4'].alignment = Alignment(vertical='top')
+    worksheet.freeze_panes = 'A4'
+    worksheet.sheet_view.showGridLines = False
+    worksheet.column_dimensions['A'].width = 16
+    worksheet.column_dimensions['B'].width = 90
+    worksheet.column_dimensions['C'].width = 28
+    worksheet.row_dimensions[2].height = 32
+    worksheet.row_dimensions[3].height = HEADER_HEIGHT
+    worksheet.protection.sheet = True
+    worksheet.protection.autoFilter = False
+    worksheet.protection.selectLockedCells = False
 
 
 def _build_summary(worksheet) -> None:
@@ -188,14 +234,15 @@ def _build_instructions(worksheet) -> None:
         ('A5', f'3. Enter up to {MAX_ROWS} populated rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
         ('A6', '4. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
         ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
-        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. Version 1 approves 300 mm; other valid widths require review.', False),
+        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
+        ('A9', '7. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
         ('A10', 'Status meanings', True),
         ('A11', 'OK — a valid result with no review warning.', False),
         ('A12', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
         ('A13', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
         ('A14', 'INPUT ERROR — correct the indicated input and calculate again.', False),
         ('A15', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
-        ('A17', 'The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
+        ('A17', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
     )
     for address, text, heading in lines:
         cell = worksheet[address]

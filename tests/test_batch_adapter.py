@@ -16,7 +16,7 @@ def test_adapter_applies_common_info_and_matches_baseline():
 def test_not_repairable_blanks_installable_quantities():
     outcome = calculate_row(batch_info(), validated_row(**{
         'Mechanism': 'Leak',
-        'Design Pressure [bar]': 100.0,
+        'Design Pressure [bar]': 150.0,
     }))
 
     assert outcome.status.value == 'NOT REPAIRABLE'
@@ -36,8 +36,18 @@ def test_unapproved_cloth_width_calculates_but_requires_review():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.outputs['Installed Plies'] == 3
-    assert any('250' in warning and 'approval' in warning.lower()
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert outcome.outputs['Compliance Warnings'] == ('W018',)
+
+
+def test_500_mm_cloth_is_approved_and_uses_its_entered_procurement_width():
+    """Catches treating the approved 500 mm roll as a review-only configuration."""
+    outcome = calculate_row(batch_info(), validated_row(**{
+        'Prowrap CF Cloth Width [mm]': 500.0,
+    }))
+
+    assert outcome.status.value == 'OK'
+    assert outcome.outputs['Compliance Warnings'] == ()
+    assert outcome.outputs['Procurement Axial Length [mm]'] == 500.0
 
 
 def test_temperature_above_qualification_limit_becomes_review_required():
@@ -47,8 +57,7 @@ def test_temperature_above_qualification_limit_becomes_review_required():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.error_message == ''
-    assert any('150.0 degC exceeds the qualified Prowrap limit' in warning
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert 'W001' in outcome.outputs['Compliance Warnings']
 
 
 def test_zero_pressure_type_a_check_is_skipped_and_requires_review():
@@ -59,5 +68,4 @@ def test_zero_pressure_type_a_check_is_skipped_and_requires_review():
 
     assert outcome.status.value == 'REVIEW REQUIRED'
     assert outcome.outputs['Type A / Class 3 Check Run'] is False
-    assert any('zero design pressure' in warning.lower()
-               for warning in outcome.outputs['Compliance Warnings'])
+    assert outcome.outputs['Compliance Warnings'] == ('W019',)
