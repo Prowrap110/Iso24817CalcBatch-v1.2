@@ -13,6 +13,14 @@ def test_zero_pressure_type_b_returns_three_ply_review_warning():
                for warning in result['compliance_warnings'])
 
 
+def test_zero_pressure_type_b_keeps_two_year_life_cap_warning():
+    result = calculate_repair(**valid_engine_inputs(
+        pressure=0.0, defect_type='Leak', defect_loc='External'
+    ))
+    assert any('Type B service life is capped at 2 years' in warning
+               for warning in result['compliance_warnings'])
+
+
 @pytest.mark.parametrize(('field', 'value'), [
     ('defect_type', 'Erosion'),
     ('defect_loc', 'Outside'),

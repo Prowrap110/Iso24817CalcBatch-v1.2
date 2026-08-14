@@ -563,15 +563,16 @@ def calculate_repair(
             "thickness can satisfy Formula 12 - do not install this repair; "
             "reduce pressure, reduce the defect size, or use another method."
         )
-    if "Type B" in calc_method_thick and type_b_details is not None:
-        if design_life > type_b_details["design_life_years"]:
+    if "Type B" in calc_method_thick:
+        if design_life > PROWRAP["type_b_max_life_years"]:
             compliance_warnings.append(
                 "Type B service life is capped at "
-                f"{type_b_details['design_life_years']:.0f} years for PRW110 "
+                f"{PROWRAP['type_b_max_life_years']:.0f} years for PRW110 "
                 f"(requested: {design_life:.0f}). The repair must be "
                 "inspected and revalidated or replaced at the end of the "
                 "Type B service life."
             )
+    if "Type B" in calc_method_thick and type_b_details is not None:
         if temp > type_b_details["service_temp_limit_c"]:
             compliance_warnings.append(
                 f"Design temperature {temp:.1f} degC exceeds the Type B "
