@@ -7,9 +7,11 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 from batch_schema import INPUT_HEADERS, MAX_ROWS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
+from cost_calculation import COST_TABLE_HEADERS, cost_formula, price_formula
 from tests.helpers import valid_row_values, workbook_bytes_with_rows
 from workbook_processor import (
     WorkbookProcessingError,
+    _commercial_input_errors,
     inspect_workbook,
     process_workbook,
 )
@@ -231,6 +233,157 @@ def test_zip_expansion_bomb_is_rejected_before_openpyxl_parsing():
     assert [issue.code for issue in inspection.workbook_errors] == ['UNREADABLE_WORKBOOK']
 
 
+def test_dense_worksheet_is_rejected_before_openpyxl_materializes_cells(monkeypatch):
+    """Catches small compressed uploads that amplify into excessive cell objects."""
+    import workbook_processor
+
+    source = _dense_workbook_bytes(100_001)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl must not parse an over-limit worksheet')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook contains too many worksheet cells.'
+    )
+
+
+def test_relocated_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
+    """Catches a worksheet relationship moved outside xl/worksheets bypassing the cap."""
+    import workbook_processor
+
+    source = _relocated_dense_workbook_bytes(100_001)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached through relocated worksheet bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook contains too many worksheet cells.'
+    )
+
+
+def test_arbitrary_suffix_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
+    """Catches a valid worksheet content type using a non-XML part suffix."""
+    import workbook_processor
+
+    source = _relocated_dense_workbook_bytes(
+        100_001,
+        new_path='xl/custom/dense.data',
+    )
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached through worksheet-suffix bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook contains too many worksheet cells.'
+    )
+
+
+def test_malformed_arbitrary_suffix_worksheet_is_rejected_before_openpyxl(monkeypatch):
+    """Catches recognized non-XML-suffix worksheets escaping malformed handling."""
+    import workbook_processor
+
+    source = _relocated_worksheet_workbook_bytes(
+        (
+            b'<worksheet '
+            b'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            b'<sheetData><row>'
+        ),
+        new_path='xl/custom/malformed.data',
+    )
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached malformed recognized worksheet')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+
+
+def test_unrelated_binary_custom_part_is_not_parsed_as_xml():
+    """Catches suffix-independent scanning that probes unrelated binary package parts."""
+    source = _workbook_with_binary_custom_part()
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+
+
+def test_strict_spreadsheetml_dense_worksheet_is_still_bounded(monkeypatch):
+    """Catches namespace filtering that disables the cap for ISO Strict sheets."""
+    import workbook_processor
+
+    source = _dense_workbook_bytes(
+        100_001,
+        namespace='http://purl.oclc.org/ooxml/spreadsheetml/main',
+    )
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached through strict-namespace bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook contains too many worksheet cells.'
+    )
+
+
+def test_foreign_custom_xml_with_worksheet_names_is_ignored():
+    """Catches local-name scanning that treats unrelated customer XML as a sheet."""
+    source = _foreign_custom_xml_workbook_bytes(100_001)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+
+
+def test_foreign_cell_elements_inside_a_real_worksheet_extension_are_ignored():
+    """Catches foreign extension elements being counted as SpreadsheetML cells."""
+    source = _worksheet_with_foreign_extension_bytes(100_001)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    with pytest.warns(UserWarning, match='Unknown extension is not supported'):
+        inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+
+
 def test_more_than_500_populated_rows_is_a_workbook_error():
     source = workbook_bytes_with_rows([valid_row_values() for _ in range(501)])
 
@@ -293,6 +446,92 @@ def test_formula_issue_has_priority_over_far_input_row_issue():
     inspection = inspect_workbook(_saved(workbook))
 
     assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
+
+
+def test_processed_cost_formulas_and_commercial_inputs_are_safe_to_reupload():
+    """Catches deny-all formula scanning or a rebuild that drops cost assumptions."""
+    first = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(first.workbook_bytes)
+    cost = workbook['Cost Calculation']
+    cost['B3'], cost['E3'], cost['H3'] = 50.0, 20.0, 1.5
+
+    second = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    regenerated = _workbook(second.workbook_bytes)['Cost Calculation']
+
+    assert [regenerated[address].value for address in ('B3', 'E3', 'H3')] == [
+        50.0, 20.0, 1.5,
+    ]
+
+
+def test_whitespace_only_commercial_input_is_rebuilt_as_a_true_blank():
+    """Catches whitespace bypassing blank validation and breaking Excel IF checks."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['B3'] = '   '
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    rebuilt = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert rebuilt['B3'].value is None
+    assert rebuilt['U6'].value == cost_formula(6)
+
+
+def test_altered_cost_formula_is_rejected():
+    """Catches broad formula allowlisting in the controlled cost range."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(result.workbook_bytes)
+    workbook['Cost Calculation']['U6'] = '=1+1'
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
+    assert 'Cost Calculation!U6' in inspection.workbook_errors[0].message
+
+
+@pytest.mark.parametrize(('address', 'value'), [
+    ('B3', -0.01),
+    ('E3', 'twenty'),
+    ('H3', float('inf')),
+    ('B3', float('nan')),
+    ('E3', True),
+])
+def test_invalid_commercial_inputs_are_rejected(address, value):
+    """Catches unsafe or unusable values copied into the trusted output."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation'][address] = value
+
+    issues = _commercial_input_errors(workbook)
+
+    assert [issue.code for issue in issues] == ['INVALID_COST_INPUT']
+    assert address in issues[0].message
+
+
+def test_formula_commercial_input_keeps_formula_error_priority():
+    """Catches formula injection being downgraded to a generic cost-input error."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['B3'] = '=1+1'
+    workbook['Batch Input & Results'].cell(1_048_576, 1).value = 508.0
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == ['FORMULA_NOT_ALLOWED']
+
+
+def test_changed_cost_heading_is_a_workbook_error():
+    """Catches accepting a structurally altered commercial table."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['A5'] = 'Outside Diameter [mm]'
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'INVALID_COST_HEADERS',
+    ]
 
 
 def test_exactly_500_controlled_rows_remain_valid():
@@ -379,6 +618,7 @@ def test_processed_warning_register_remains_filterable_while_protected():
 def test_previous_five_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the previous template."""
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    del workbook['Cost Calculation']
     del workbook['Warnings']
 
     inspection = inspect_workbook(_saved(workbook))
@@ -386,9 +626,133 @@ def test_previous_five_sheet_template_is_accepted_and_upgraded():
 
     assert inspection.workbook_errors == ()
     assert _workbook(result.workbook_bytes).sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Warnings',
+        'Batch Information', 'Batch Input & Results', 'Cost Calculation', 'Warnings',
         'Summary', 'Instructions', 'Lists',
     ]
+
+
+def test_previous_six_sheet_template_is_accepted_and_upgraded():
+    """Catches a release that strands users holding the warning-register template."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    del workbook['Cost Calculation']
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+
+    assert _workbook(result.workbook_bytes).sheetnames == [
+        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
+        'Warnings', 'Summary', 'Instructions', 'Lists',
+    ]
+
+
+def test_processed_cost_sheet_maps_requested_values_and_formulas():
+    """Catches wrong source-column order or missing controlled formulas."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(result.workbook_bytes)
+    source = workbook['Batch Input & Results']
+    cost = workbook['Cost Calculation']
+    expected_source_columns = (
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'R',
+        'AC', 'AJ', 'AK', 'AR', 'AS', 'AT', 'AU', 'AV',
+    )
+
+    assert tuple(cell.value for cell in cost[5]) == COST_TABLE_HEADERS
+    assert [cost.cell(6, column).value for column in range(1, 21)] == [
+        source[f'{column}2'].value for column in expected_source_columns
+    ]
+    assert cost['U6'].value == cost_formula(6)
+    assert cost['V6'].value == price_formula(6)
+    assert cost.tables['CostRows'].ref == 'A5:V6'
+
+
+def test_uploaded_cost_table_values_are_never_trusted():
+    """Catches user-edited or tampered commercial rows being copied into output."""
+    first = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    edited = _workbook(first.workbook_bytes)
+    edited['Cost Calculation']['A6'] = 999999.0
+    edited['Cost Calculation']['S6'] = 999999.0
+
+    second = process_workbook(_saved(edited), processed_at=FIXED_TIME)
+    regenerated = _workbook(second.workbook_bytes)
+
+    assert regenerated['Cost Calculation']['A6'].value == 457.2
+    assert regenerated['Cost Calculation']['S6'].value == (
+        regenerated['Batch Input & Results']['AU2'].value
+    )
+
+
+def test_processed_cost_sheet_uses_one_compact_row_per_populated_defect():
+    """Catches sparse source row numbers leaking into compact cost-table layout."""
+    workbook = _workbook(workbook_bytes_with_rows([
+        valid_row_values(),
+        valid_row_values(**{'Pipe OD [mm]': 508.0}),
+        valid_row_values(**{'Pipe OD [mm]': 610.0}),
+    ]))
+    data = workbook['Batch Input & Results']
+    for column in range(1, len(INPUT_HEADERS) + 1):
+        data.cell(3, column).value = None
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    cost = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert [cost['A6'].value, cost['A7'].value, cost['A8'].value] == [
+        457.2, 610.0, None,
+    ]
+    assert cost['U7'].value == cost_formula(7)
+    assert cost.tables['CostRows'].ref == 'A5:V7'
+
+
+def test_processed_cost_table_filter_covers_every_compact_row():
+    """Catches the table filter retaining the one-row template range."""
+    result = process_workbook(
+        workbook_bytes_with_rows([
+            valid_row_values(),
+            valid_row_values(**{'Pipe OD [mm]': 508.0}),
+            valid_row_values(**{'Pipe OD [mm]': 610.0}),
+        ]),
+        processed_at=FIXED_TIME,
+    )
+    table = _workbook(result.workbook_bytes)['Cost Calculation'].tables['CostRows']
+
+    assert table.ref == 'A5:V8'
+    assert table.autoFilter.ref == table.ref
+
+
+def test_cleared_processed_defect_ignores_stale_exact_cost_formulas():
+    """Catches valid generated formulas blocking a safe processed-workbook rebuild."""
+    first = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    edited = _workbook(first.workbook_bytes)
+    data = edited['Batch Input & Results']
+    for column in range(1, len(INPUT_HEADERS) + 1):
+        data.cell(2, column).value = None
+
+    second = process_workbook(_saved(edited), processed_at=FIXED_TIME)
+    cost = _workbook(second.workbook_bytes)['Cost Calculation']
+
+    assert second.populated_rows == 0
+    assert [cost.cell(6, column).value for column in range(1, 23)] == [None] * 22
+    assert cost.tables['CostRows'].ref == 'A5:V6'
+
+
+def test_processed_workbook_requests_full_automatic_recalculation():
+    """Catches cost formulas remaining stale after users edit commercial assumptions."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(result.workbook_bytes)
+
+    assert workbook.calculation.calcMode == 'auto'
+    assert workbook.calculation.fullCalcOnLoad is True
+    assert workbook.calculation.forceFullCalc is True
 
 
 def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
@@ -495,8 +859,10 @@ def test_process_rejects_workbook_level_errors():
 def test_unexpected_row_exception_is_logged_with_source_row_only(caplog, monkeypatch):
     import workbook_processor
 
+    sensitive_message = 'customer=Top Secret; pipe_od=999'
+
     def explode(*_args, **_kwargs):
-        raise RuntimeError('synthetic calculation failure')
+        raise RuntimeError(sensitive_message)
 
     monkeypatch.setattr(workbook_processor, 'calculate_row', explode)
     with caplog.at_level('ERROR', logger='workbook_processor'):
@@ -504,6 +870,11 @@ def test_unexpected_row_exception_is_logged_with_source_row_only(caplog, monkeyp
 
     assert result.status_counts == {'SYSTEM ERROR': 1}
     assert 'source Excel row 2' in caplog.text
+    assert 'RuntimeError' in caplog.text
+    assert 'explode' in caplog.text
+    assert sensitive_message not in caplog.text
+    assert 'Top Secret' not in caplog.text
+    assert 'pipe_od=999' not in caplog.text
     assert 'Batch Customer' not in caplog.text
     assert '457.2' not in caplog.text
 
@@ -515,6 +886,164 @@ def _encrypted_zip_bytes() -> bytes:
         entry.flag_bits |= 0x1
         archive.writestr(entry, b'<workbook/>')
     return output.getvalue()
+
+
+def _dense_workbook_bytes(
+    cell_count: int,
+    namespace: str = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+) -> bytes:
+    """Return a valid controlled XLSX package with one deliberately dense sheet."""
+    worksheet_xml = _dense_worksheet_xml(cell_count, namespace)
+    source = workbook_bytes_with_rows([valid_row_values()])
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(output, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == 'xl/worksheets/sheet5.xml':
+                replacement = zipfile.ZipInfo(entry.filename)
+                replacement.compress_type = zipfile.ZIP_STORED
+                output_zip.writestr(replacement, worksheet_xml)
+            else:
+                output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _relocated_dense_workbook_bytes(
+    cell_count: int,
+    new_path: str = 'xl/custom/dense.xml',
+) -> bytes:
+    """Return a controlled XLSX whose dense worksheet part uses a custom path."""
+    return _relocated_worksheet_workbook_bytes(
+        _dense_worksheet_xml(cell_count),
+        new_path=new_path,
+    )
+
+
+def _relocated_worksheet_workbook_bytes(
+    worksheet_xml: bytes,
+    new_path: str,
+) -> bytes:
+    """Relocate one valid worksheet part and update its OPC declarations."""
+    old_path = b'/xl/worksheets/sheet5.xml'
+    new_part_name = f'/{new_path}'.encode()
+    source = workbook_bytes_with_rows([valid_row_values()])
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(output, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            if entry.filename == 'xl/worksheets/sheet5.xml':
+                continue
+            content = input_zip.read(entry.filename)
+            if entry.filename in {'[Content_Types].xml', 'xl/_rels/workbook.xml.rels'}:
+                content = content.replace(old_path, new_part_name)
+            output_zip.writestr(entry, content)
+        replacement = zipfile.ZipInfo(new_path)
+        replacement.compress_type = zipfile.ZIP_STORED
+        output_zip.writestr(replacement, worksheet_xml)
+    return output.getvalue()
+
+
+def _workbook_with_binary_custom_part() -> bytes:
+    """Add a related binary part with a valid OPC content-type declaration."""
+    default_type = (
+        b'<Default Extension="data" ContentType="application/octet-stream"/>'
+    )
+    relationship = (
+        b'<Relationship Type="urn:protap:binary-attachment" '
+        b'Target="custom/blob.data" Id="rId4"/>'
+    )
+    source = workbook_bytes_with_rows([valid_row_values()])
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(output, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '[Content_Types].xml':
+                content = content.replace(b'</Types>', default_type + b'</Types>')
+            elif entry.filename == '_rels/.rels':
+                content = content.replace(b'</Relationships>', relationship + b'</Relationships>')
+            output_zip.writestr(entry, content)
+        binary_entry = zipfile.ZipInfo('custom/blob.data')
+        binary_entry.compress_type = zipfile.ZIP_STORED
+        output_zip.writestr(binary_entry, b'\x00\xffnot-xml' * 10_000)
+    return output.getvalue()
+
+
+def _foreign_custom_xml_workbook_bytes(cell_count: int) -> bytes:
+    """Add a related custom XML part whose local names resemble a worksheet."""
+    custom_xml = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<worksheet xmlns="urn:customer-custom-data">'
+        + b'<c/>' * cell_count
+        + b'</worksheet>'
+    )
+    relationship = (
+        b'<Relationship '
+        b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml" '
+        b'Target="customXml/item1.xml" Id="rId4"/>'
+    )
+    source = workbook_bytes_with_rows([valid_row_values()])
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(output, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '_rels/.rels':
+                content = content.replace(b'</Relationships>', relationship + b'</Relationships>')
+            output_zip.writestr(entry, content)
+        custom_entry = zipfile.ZipInfo('customXml/item1.xml')
+        custom_entry.compress_type = zipfile.ZIP_STORED
+        output_zip.writestr(custom_entry, custom_xml)
+    return output.getvalue()
+
+
+def _worksheet_with_foreign_extension_bytes(cell_count: int) -> bytes:
+    """Add many foreign c elements inside a valid worksheet extension container."""
+    extension = (
+        b'<extLst><ext uri="{PROTAP-FOREIGN-CELL-TEST}" '
+        b'xmlns:f="urn:customer-custom-data">'
+        + b'<f:c/>' * cell_count
+        + b'</ext></extLst>'
+    )
+    source = workbook_bytes_with_rows([valid_row_values()])
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(output, 'w') as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == 'xl/worksheets/sheet5.xml':
+                content = content.replace(b'</worksheet>', extension + b'</worksheet>')
+                replacement = zipfile.ZipInfo(entry.filename)
+                replacement.compress_type = zipfile.ZIP_STORED
+                output_zip.writestr(replacement, content)
+            else:
+                output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _dense_worksheet_xml(
+    cell_count: int,
+    namespace: str = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+) -> bytes:
+    cells_per_row = 100
+    rows = []
+    for first_cell in range(0, cell_count, cells_per_row):
+        row_number = first_cell // cells_per_row + 1
+        row_cell_count = min(cells_per_row, cell_count - first_cell)
+        cells = ''.join(
+            f'<c r="{_column_name(column)}{row_number}" t="n"><v>1</v></c>'
+            for column in range(1, row_cell_count + 1)
+        )
+        rows.append(f'<row r="{row_number}">{cells}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<worksheet xmlns="{namespace}">'
+        f'<sheetData>{"".join(rows)}</sheetData></worksheet>'
+    ).encode()
+
+
+def _column_name(column: int) -> str:
+    name = ''
+    while column:
+        column, remainder = divmod(column - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
 
 
 def _stable_json(value: str) -> str:

@@ -8,9 +8,11 @@ from datetime import UTC, datetime
 from io import BytesIO
 import json
 import logging
+import math
 from pathlib import Path, PurePosixPath
+import traceback
 import zipfile
-from xml.etree.ElementTree import ParseError
+from xml.etree.ElementTree import ParseError, iterparse
 
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -33,6 +35,15 @@ from batch_schema import (
 )
 from batch_status import CalculationStatus
 from batch_validation import validate_batch_info, validate_row
+from cost_calculation import (
+    COST_FIRST_DATA_ROW,
+    COST_INPUTS,
+    COST_SOURCE_HEADERS,
+    COST_TABLE_HEADERS,
+    cost_formula,
+    is_allowed_cost_formula,
+    price_formula,
+)
 from workbook_template import create_template_workbook
 from warning_catalog import warning_meaning
 
@@ -47,9 +58,18 @@ _LEGACY_SHEETS = (
     'Instructions',
     'Lists',
 )
+_PREVIOUS_SHEETS = (
+    'Batch Information',
+    'Batch Input & Results',
+    'Warnings',
+    'Summary',
+    'Instructions',
+    'Lists',
+)
 _CURRENT_SHEETS = (
     'Batch Information',
     'Batch Input & Results',
+    'Cost Calculation',
     'Warnings',
     'Summary',
     'Instructions',
@@ -60,6 +80,17 @@ _MAX_ZIP_ENTRIES = 250
 _MAX_ZIP_UNCOMPRESSED_BYTES = 25 * 1024 * 1024
 _MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 _MAX_ZIP_COMPRESSION_RATIO = 100
+# A fully populated controlled workbook emits roughly 37,000 worksheet cell
+# elements. This total-workbook ceiling leaves more than 2.5x headroom while
+# bounding the number of Python cell objects openpyxl may materialize.
+_MAX_WORKBOOK_CELLS = 100_000
+_SPREADSHEETML_MAIN_NAMESPACES = frozenset({
+    'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+    'http://purl.oclc.org/ooxml/spreadsheetml/main',
+})
+_WORKSHEET_CONTENT_TYPE = (
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +147,9 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     formula_errors = _formula_errors(workbook)
     if formula_errors:
         return _empty_inspection(formula_errors, header_summary)
+    commercial_input_errors = _commercial_input_errors(workbook)
+    if commercial_input_errors:
+        return _empty_inspection(commercial_input_errors, header_summary)
 
     batch_info, batch_issues = validate_batch_info(common_values)
     data_sheet = workbook['Batch Input & Results']
@@ -198,6 +232,7 @@ def process_workbook(
         _write_result_row(data_sheet, excel_row, calculation, processed_timestamp)
         status_counts[calculation.status.value] += 1
 
+    _write_cost_sheet(output_workbook)
     _write_warnings_sheet(output_workbook)
     _write_summary(
         output_workbook,
@@ -207,6 +242,9 @@ def process_workbook(
         status_counts,
         _sanitized_source_name(source_name),
     )
+    output_workbook.calculation.calcMode = 'auto'
+    output_workbook.calculation.fullCalcOnLoad = True
+    output_workbook.calculation.forceFullCalc = True
     output = BytesIO()
     output_workbook.save(output)
     return ProcessedBatch(
@@ -249,7 +287,9 @@ def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
     extras = [sheet for sheet in workbook.sheetnames if sheet not in _CURRENT_SHEETS]
     if extras:
         return (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
-    if tuple(workbook.sheetnames) not in {_LEGACY_SHEETS, _CURRENT_SHEETS}:
+    if tuple(workbook.sheetnames) not in {
+        _LEGACY_SHEETS, _PREVIOUS_SHEETS, _CURRENT_SHEETS,
+    }:
         return (_issue('INVALID_WORKSHEET_ORDER', 'Worksheets do not match the controlled template order.'),)
 
     info_sheet = workbook['Batch Information']
@@ -267,6 +307,13 @@ def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
         return (_issue('DUPLICATE_INPUT_HEADER', f'Duplicate workbook heading: {duplicate}.'),)
     if headings != expected:
         return (_issue('INVALID_INPUT_HEADERS', 'Batch Input & Results headings do not match the controlled template.'),)
+    if 'Cost Calculation' in workbook.sheetnames:
+        cost_headings = tuple(cell.value for cell in workbook['Cost Calculation'][5])
+        if cost_headings != COST_TABLE_HEADERS:
+            return (_issue(
+                'INVALID_COST_HEADERS',
+                'Cost Calculation headings do not match the controlled template.',
+            ),)
     return ()
 
 
@@ -289,10 +336,38 @@ def _formula_errors(workbook) -> tuple[ValidationIssue, ...]:
     for worksheet in workbook.worksheets:
         for _, cell in _loaded_cells(worksheet):
             if _is_formula_cell(cell):
+                if (
+                    worksheet.title == 'Cost Calculation'
+                    and getattr(cell, 'data_type', None) == 'f'
+                    and isinstance(cell.value, str)
+                    and is_allowed_cost_formula(cell)
+                ):
+                    continue
                 return (_issue(
                     'FORMULA_NOT_ALLOWED',
                     f'Formula cells are not allowed: {worksheet.title}!{cell.coordinate}.',
                 ),)
+    return ()
+
+
+def _commercial_input_errors(workbook) -> tuple[ValidationIssue, ...]:
+    if 'Cost Calculation' not in workbook.sheetnames:
+        return ()
+    worksheet = workbook['Cost Calculation']
+    for address, label in COST_INPUTS:
+        value = worksheet[address].value
+        if _is_blank(value):
+            continue
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            return (_issue(
+                'INVALID_COST_INPUT',
+                f'{label} must be blank or a non-negative number: {address}.',
+            ),)
     return ()
 
 
@@ -339,8 +414,15 @@ def _calculate_one(
     assert row is not None
     try:
         return calculate_row(batch_info, row)
-    except Exception:
-        logger.exception('Unexpected calculation exception for source Excel row %s', excel_row)
+    except Exception as exc:
+        frames = ' -> '.join(
+            f'{Path(frame.filename).name}:{frame.lineno} in {frame.name}'
+            for frame in traceback.extract_tb(exc.__traceback__)
+        ) or '(no traceback frames)'
+        logger.error(
+            'Unexpected %s for source Excel row %s. Traceback frames: %s',
+            type(exc).__name__, excel_row, frames,
+        )
         return RowCalculation(
             source_excel_row=excel_row,
             status=CalculationStatus.SYSTEM_ERROR,
@@ -363,6 +445,32 @@ def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, ti
     }
     for column, heading in enumerate(OUTPUT_HEADERS, start=len(INPUT_HEADERS) + 1):
         worksheet.cell(excel_row, column).value = _output_value(heading, outputs.get(heading))
+
+
+def _write_cost_sheet(workbook) -> None:
+    source = workbook['Batch Input & Results']
+    cost = workbook['Cost Calculation']
+    all_headers = INPUT_HEADERS + OUTPUT_HEADERS
+    source_columns = {
+        header: all_headers.index(header) + 1 for header in COST_SOURCE_HEADERS
+    }
+    populated = _populated_rows(source)
+    for output_row, (source_row, _) in enumerate(populated, start=COST_FIRST_DATA_ROW):
+        for destination_column, header in enumerate(COST_SOURCE_HEADERS, start=1):
+            cell = cost.cell(output_row, destination_column)
+            cell.value = source.cell(source_row, source_columns[header]).value
+            cell.alignment = Alignment(vertical='top', wrap_text=True)
+            cell.border = Border(bottom=source['A2'].border.bottom)
+        cost.cell(output_row, 21).value = cost_formula(output_row)
+        cost.cell(output_row, 22).value = price_formula(output_row)
+        for column in (21, 22):
+            cell = cost.cell(output_row, column)
+            cell.alignment = Alignment(vertical='top')
+            cell.border = Border(bottom=source['A2'].border.bottom)
+            cell.number_format = '#,##0.00'
+    table = cost.tables['CostRows']
+    table.ref = f'A5:V{max(COST_FIRST_DATA_ROW, 5 + len(populated))}'
+    table.autoFilter.ref = table.ref
 
 
 def _write_warnings_sheet(workbook) -> None:
@@ -544,7 +652,89 @@ def _zip_safety_errors(archive: zipfile.ZipFile) -> tuple[ValidationIssue, ...]:
             and entry.file_size / entry.compress_size > _MAX_ZIP_COMPRESSION_RATIO
         ):
             return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook has a suspicious compression ratio.'),)
+    worksheet_parts = _worksheet_part_names(archive, entries)
+    worksheet_cells = 0
+    for entry in entries:
+        if (
+            entry.flag_bits & 0x1
+            or entry.filename not in worksheet_parts
+        ):
+            continue
+        with archive.open(entry) as worksheet_xml:
+            elements = iterparse(worksheet_xml, events=('start', 'end'))
+            try:
+                event, root = next(elements)
+            except StopIteration:
+                continue
+            root_namespace, root_local_name = _xml_expanded_name(root.tag)
+            if (
+                event != 'start'
+                or root_local_name != 'worksheet'
+                or root_namespace not in _SPREADSHEETML_MAIN_NAMESPACES
+            ):
+                root.clear()
+                continue
+            for event, element in elements:
+                namespace, local_name = _xml_expanded_name(element.tag)
+                if (
+                    event == 'end'
+                    and local_name == 'c'
+                    and namespace == root_namespace
+                ):
+                    worksheet_cells += 1
+                    if worksheet_cells > _MAX_WORKBOOK_CELLS:
+                        return (_issue(
+                            'UNREADABLE_WORKBOOK',
+                            'The uploaded workbook contains too many worksheet cells.',
+                        ),)
+                element.clear()
     return ()
+
+
+def _worksheet_part_names(
+    archive: zipfile.ZipFile,
+    entries: list[zipfile.ZipInfo],
+) -> frozenset[str]:
+    """Resolve worksheet ZIP parts from OPC content types, regardless of suffix."""
+    content_types_entry = archive.getinfo('[Content_Types].xml')
+    if content_types_entry.flag_bits & 0x1:
+        return frozenset()
+
+    override_parts: set[str] = set()
+    default_extensions: set[str] = set()
+    with archive.open(content_types_entry) as content_types_xml:
+        for _, element in iterparse(content_types_xml, events=('end',)):
+            _, local_name = _xml_expanded_name(element.tag)
+            if element.attrib.get('ContentType') == _WORKSHEET_CONTENT_TYPE:
+                if local_name == 'Override':
+                    part_name = element.attrib.get('PartName', '').lstrip('/')
+                    if part_name:
+                        override_parts.add(part_name)
+                elif local_name == 'Default':
+                    extension = element.attrib.get('Extension', '').lower()
+                    if extension:
+                        default_extensions.add(extension)
+            element.clear()
+
+    return frozenset(
+        entry.filename
+        for entry in entries
+        if (
+            entry.filename in override_parts
+            or PurePosixPath(entry.filename).suffix.lstrip('.').lower()
+            in default_extensions
+        )
+    )
+
+
+def _xml_expanded_name(tag: object) -> tuple[str, str]:
+    if not isinstance(tag, str):
+        return '', ''
+    if tag.startswith('{'):
+        namespace, separator, local_name = tag[1:].partition('}')
+        if separator:
+            return namespace, local_name
+    return '', tag
 
 
 def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
@@ -558,6 +748,13 @@ def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
     for excel_row in range(2, MAX_ROWS + 2):
         for column in range(1, len(INPUT_HEADERS) + 1):
             output_data.cell(excel_row, column).value = source_data.cell(excel_row, column).value
+
+    if 'Cost Calculation' in source_workbook.sheetnames:
+        source_cost = source_workbook['Cost Calculation']
+        output_cost = output_workbook['Cost Calculation']
+        for address, _ in COST_INPUTS:
+            source_value = source_cost[address].value
+            output_cost[address].value = None if _is_blank(source_value) else source_value
 
 
 def _sanitized_source_name(source_name: str | None) -> str:

@@ -12,6 +12,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.workbook.defined_name import DefinedName
 
 from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
+from cost_calculation import COST_INPUTS, COST_TABLE_HEADERS
 from workbook_formatting import (
     HEADER_HEIGHT,
     INPUT_ERROR_COLOR,
@@ -66,6 +67,7 @@ _HEADER_NOTES = {
 }
 
 _THIN_GRAY = Side(style='thin', color='D9E1F2')
+_COST_INPUT_COLOR = 'FFF2CC'
 
 
 def create_template_workbook() -> bytes:
@@ -74,6 +76,7 @@ def create_template_workbook() -> bytes:
     batch_info = workbook.active
     batch_info.title = 'Batch Information'
     data = workbook.create_sheet('Batch Input & Results')
+    cost = workbook.create_sheet('Cost Calculation')
     warnings = workbook.create_sheet('Warnings')
     summary = workbook.create_sheet('Summary')
     instructions = workbook.create_sheet('Instructions')
@@ -81,6 +84,7 @@ def create_template_workbook() -> bytes:
 
     _build_batch_information(batch_info)
     _build_data_sheet(data)
+    _build_cost_calculation(cost)
     _build_warnings(warnings)
     _build_summary(summary)
     _build_instructions(instructions)
@@ -152,12 +156,63 @@ def _build_data_sheet(worksheet) -> None:
     _add_dropdowns(worksheet)
     _add_status_formatting(worksheet, input_count + 2)
     worksheet.protection.sheet = True
+    worksheet.protection.autoFilter = False
     worksheet.protection.selectLockedCells = False
-    worksheet.protection.selectUnlockedCells = True
+    worksheet.protection.selectUnlockedCells = False
     set_capped_column_widths(worksheet)
     for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
         worksheet.column_dimensions[column].width = 28
     worksheet.column_dimensions['W'].width = 16
+
+
+def _build_cost_calculation(worksheet) -> None:
+    worksheet['A1'] = 'PROWRAP Cost Calculation'
+    worksheet['A1'].font = Font(
+        name='Calibri', size=16, bold=True, color=INPUT_HEADER_COLOR,
+    )
+
+    for address, label in COST_INPUTS:
+        value_cell = worksheet[address]
+        label_cell = worksheet.cell(value_cell.row, value_cell.column - 1, label)
+        apply_common_field_style(label_cell, value_cell)
+        value_cell.fill = PatternFill(fill_type='solid', fgColor=_COST_INPUT_COLOR)
+        value_cell.number_format = '#,##0.00'
+
+    validation = DataValidation(
+        type='decimal', operator='greaterThanOrEqual', formula1='0',
+        allow_blank=True, errorTitle='Enter zero or a positive number',
+        error='Enter a numeric value greater than or equal to zero, or leave this cell blank.',
+        showErrorMessage=True, errorStyle='stop',
+    )
+    for address, _ in COST_INPUTS:
+        validation.add(address)
+    worksheet.add_data_validation(validation)
+
+    for column, header in enumerate(COST_TABLE_HEADERS, start=1):
+        apply_header_style(worksheet.cell(5, column, header), OUTPUT_HEADER_COLOR)
+    worksheet.row_dimensions[5].height = HEADER_HEIGHT
+
+    table = Table(displayName='CostRows', ref='A5:V6')
+    table.tableStyleInfo = TableStyleInfo(
+        name='TableStyleMedium2', showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True, showColumnStripes=False,
+    )
+    worksheet.add_table(table)
+
+    for row in range(6, MAX_ROWS + 6):
+        for column in range(1, len(COST_TABLE_HEADERS) + 1):
+            worksheet.cell(row, column).number_format = '#,##0.00'
+        for column in (10, 15, 17):
+            worksheet.cell(row, column).number_format = '#,##0'
+
+    worksheet.freeze_panes = 'A6'
+    worksheet.sheet_view.showGridLines = False
+    worksheet.protection.sheet = True
+    worksheet.protection.autoFilter = False
+    worksheet.protection.selectLockedCells = False
+    worksheet.protection.selectUnlockedCells = False
+    set_capped_column_widths(worksheet)
+    worksheet.merge_cells('A1:V1')
 
 
 def _build_warnings(worksheet) -> None:
@@ -236,13 +291,18 @@ def _build_instructions(worksheet) -> None:
         ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
         ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
         ('A9', '7. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
-        ('A10', 'Status meanings', True),
-        ('A11', 'OK — a valid result with no review warning.', False),
-        ('A12', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
-        ('A13', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
-        ('A14', 'INPUT ERROR — correct the indicated input and calculate again.', False),
-        ('A15', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
-        ('A17', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The workbook contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
+        ('A10', '8. On Cost Calculation, B3 (CF Cost / m2), E3 (Epoxy Cost / kg), and H3 (Price Multiplier) are highlighted and editable. They may be blank or retain values from a previously processed workbook.', False),
+        ('A11', '9. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
+        ('A12', '10. Price = Cost x Price Multiplier. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
+        ('A13', '11. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost and Price formulas and may be safely uploaded again.', False),
+        ('A14', '12. Previously downloaded controlled five-sheet and six-sheet workbooks remain accepted and are upgraded to the current seven-sheet output.', False),
+        ('A16', 'Status meanings', True),
+        ('A17', 'OK — a valid result with no review warning.', False),
+        ('A18', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
+        ('A19', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
+        ('A20', 'INPUT ERROR — correct the indicated input and calculate again.', False),
+        ('A21', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
+        ('A23', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The input template contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
     )
     for address, text, heading in lines:
         cell = worksheet[address]
@@ -250,7 +310,7 @@ def _build_instructions(worksheet) -> None:
         cell.font = Font(name='Calibri', size=14 if address == 'A1' else 11, bold=heading)
         cell.alignment = Alignment(wrap_text=True, vertical='top')
     worksheet.column_dimensions['A'].width = 115
-    for row in range(3, 18):
+    for row in range(3, 24):
         worksheet.row_dimensions[row].height = 32
     worksheet.row_dimensions[1].height = 28
 

@@ -19,14 +19,17 @@ streamlit run app.py
 2. On **Batch Information**, enter Customer, Project Location, and Report No once.
 3. On **Batch Input & Results**, enter one defect per row, starting with `Pipe OD [mm]`. Do not add, remove, rename, or reorder columns.
 4. Upload the `.xlsx`, review the first 20 rows, calculate, and download the new results workbook.
+5. In the processed workbook, enter or change the three highlighted commercial assumptions on **Cost Calculation**: `B3` for CF Cost / m2, `E3` for Epoxy Cost / kg, and `H3` for Price Multiplier.
 
-The template accepts at most 500 populated rows. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns, and the workbook contains no formulas, macros, or VBA.
+The template accepts at most 500 populated rows. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns. The downloaded input template contains no formulas, macros, or VBA. A processed workbook contains only the controlled Cost and Price formulas described below.
+
+The **Cost Calculation** table contains the twenty requested engineering fields in the same compact row order as the populated defects. Cost is calculated as `Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg`; Price is `Cost x Price Multiplier`. Both remain blank until their required assumptions and material quantities exist. No currency symbol is fixed, so enter both material rates in one consistent currency. The three assumptions remain editable after download, and a processed workbook may be uploaded again: its assumptions are retained while the controlled table and formulas are rebuilt from the trusted engineering results.
 
 Processed defect rows show only permanent references such as `W003, W006` in the `Compliance Warnings` column. The separate **Warnings** worksheet gives each code's full meaning, required action, and affected source-row numbers. Repeated warnings share one permanent code and one consolidated register entry.
 
 Prowrap CF cloth widths of **300 mm and 500 mm** are approved configurations in this batch release; both continue to use the fixed 50 mm stitch overlap. The approved material basis is **Tg = 110 degC**, giving a general qualified design-temperature limit of **90 degC** and a long-life Class 3 Type B limit of **80 degC**.
 
-Previously downloaded controlled five-sheet templates remain accepted. Processing upgrades them to the current six-sheet output containing the Warnings register.
+Previously downloaded controlled five-sheet and six-sheet templates remain accepted. Processing upgrades them to the current seven-sheet output containing **Cost Calculation** and the **Warnings** register.
 
 ## Statuses
 
@@ -40,7 +43,7 @@ These are preliminary screening outputs. Competent engineering review is require
 
 ## Privacy and file handling
 
-The app processes one controlled `.xlsx` workbook at a time (maximum 10 MB). Uploads and generated files are kept only in the active Streamlit session or temporary processing memory; the application does not create a calculation database or retain customer workbooks. Do not upload macro-enabled, password-protected, or formula-containing workbooks.
+The app processes one controlled `.xlsx` workbook at a time (maximum 10 MB). Uploads and generated files are kept only in the active Streamlit session or temporary processing memory; the application does not create a calculation database or retain customer workbooks. Do not upload macro-enabled or password-protected workbooks. Unexpected or altered formulas are rejected; only the exact Cost and Price formulas produced by this calculator are accepted on re-upload.
 
 ## Verify
 
@@ -49,4 +52,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
 python3 scripts/create_acceptance_workbook.py /tmp/PROWRAP_Batch_Acceptance.xlsx
 ```
 
-The six-row acceptance workbook exercises `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, a zero-pressure Type B `REVIEW REQUIRED` row, repeated permanent warning references, and a warning-free 500 mm cloth row.
+The six-row acceptance workbook exercises `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, a zero-pressure Type B `REVIEW REQUIRED` row, repeated permanent warning references, a warning-free 500 mm cloth row, the twenty-field commercial mapping, and controlled Cost and Price formulas.

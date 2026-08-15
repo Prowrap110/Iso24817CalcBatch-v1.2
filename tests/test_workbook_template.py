@@ -16,7 +16,7 @@ def test_template_has_common_info_and_row_table():
     workbook = _template_workbook()
 
     assert workbook.sheetnames == [
-        'Batch Information', 'Batch Input & Results',
+        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
         'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
     info = workbook['Batch Information']
@@ -29,6 +29,58 @@ def test_template_has_common_info_and_row_table():
     assert data['A1'].value == 'Pipe OD [mm]'
     assert data.freeze_panes == 'B2'
     assert workbook['Lists'].sheet_state == 'hidden'
+
+
+def test_template_has_blank_editable_cost_sheet_in_new_controlled_order():
+    workbook = _template_workbook()
+
+    assert workbook.sheetnames == [
+        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
+        'Warnings', 'Summary', 'Instructions', 'Lists',
+    ]
+    cost = workbook['Cost Calculation']
+    assert [cost[address].value for address in ('B3', 'E3', 'H3')] == [None, None, None]
+    assert all(
+        cost[address].protection.locked is False
+        for address in ('B3', 'E3', 'H3')
+    )
+    assert [cost.cell(5, column).value for column in range(1, 23)][-2:] == [
+        'Cost', 'Price',
+    ]
+    assert cost.freeze_panes == 'A6'
+    assert cost.protection.sheet is True
+    assert cost.protection.selectUnlockedCells is False
+
+
+def test_template_visibly_highlights_cost_assumption_value_cells():
+    """Catches editable commercial inputs blending into the white worksheet."""
+    cost = _template_workbook()['Cost Calculation']
+    inputs = [cost[address] for address in ('B3', 'E3', 'H3')]
+
+    assert [cell.fill.fill_type for cell in inputs] == ['solid'] * 3
+    assert [cell.fill.fgColor.rgb for cell in inputs] == ['00FFF2CC'] * 3
+    assert [cell.number_format for cell in inputs] == ['#,##0.00'] * 3
+    assert [cell.protection.locked for cell in inputs] == [False] * 3
+    assert [str(validation.sqref) for validation in cost.data_validations.dataValidation] == [
+        'B3 E3 H3',
+    ]
+
+
+def test_cost_count_columns_use_integer_display_without_populating_template_rows():
+    """Catch years, plies, or band counts being displayed as fractional quantities."""
+    cost = _template_workbook()['Cost Calculation']
+
+    assert [cost.cell(5, column).value for column in (10, 15, 17)] == [
+        'Design Life [years]', 'Installed Plies', 'Cloth Band Count',
+    ]
+    for row in (6, MAX_ROWS + 5):
+        assert [cost.cell(row, column).value for column in (10, 15, 17)] == [
+            None, None, None,
+        ]
+        assert [cost.cell(row, column).number_format for column in (10, 15, 17)] == [
+            '#,##0', '#,##0', '#,##0',
+        ]
+        assert cost.cell(row, 11).number_format == '#,##0.00'
 
 
 def test_template_has_a_visible_protected_warning_register_with_empty_state():
@@ -126,6 +178,21 @@ def test_template_marks_inputs_editable_and_outputs_protected_with_clear_headers
     assert 'required only for internal corrosion' in data['J1'].comment.text.lower()
 
 
+def test_protected_main_sheet_keeps_inputs_selectable_and_table_filterable():
+    """Catches inverted openpyxl protection flags after workbook serialization."""
+    workbook = _template_workbook()
+    data = workbook['Batch Input & Results']
+    input_count = len(INPUT_HEADERS)
+    table = data.tables['BatchRows']
+
+    assert data.protection.sheet is True
+    assert data.protection.selectUnlockedCells is False
+    assert data.protection.autoFilter is False
+    assert data['A2'].protection.locked is False
+    assert data.cell(2, input_count + 1).protection.locked is True
+    assert table.autoFilter.ref == table.ref
+
+
 def test_template_has_status_colors_in_conditional_formatting():
     """Catches a template that gives row statuses no visual review signal."""
     workbook = _template_workbook()
@@ -172,6 +239,8 @@ def test_template_contains_no_formulas_and_has_user_guidance():
     assert 'warnings worksheet' in instruction_text
     assert '300 mm and 500 mm' in instruction_text
     assert 'tg = 110' in instruction_text
+    assert 'b3 (cf cost / m2), e3 (epoxy cost / kg), and h3 (price multiplier)' in instruction_text
+    assert 'may be blank or retain values from a previously processed workbook' in instruction_text
     assert 'preliminary screening' in ' '.join(
         str(cell.value).lower()
         for row in summary.iter_rows()

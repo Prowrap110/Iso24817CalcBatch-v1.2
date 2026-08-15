@@ -13,12 +13,12 @@ The copied modules are:
 - `prowrap_calculations.py`
 - `prowrap_materials.py`
 
-## Shared approved material-basis change
+## Approved batch material-basis change
 
-The user-approved PRW110 material basis is Tg = 110 degC in both this batch
-release and the separately deployed v1.1 calculator. Both derive the general
-qualified design limit as Tg - 20 = 90 degC and the Class 3 Type B limit for
-service longer than two years as Tg - 30 = 80 degC.
+The user-approved PRW110 material basis in this batch release is Tg = 110 degC.
+It derives the general qualified design limit as Tg - 20 = 90 degC and the
+Class 3 Type B limit for service longer than two years as Tg - 30 = 80 degC.
+This batch release does not change or redeploy the separate v1.1 calculator.
 
 ## Intentional batch-only corrections
 
@@ -42,5 +42,5 @@ They do not modify the source repository or the existing v1.1 deployment.
 
 All batch orchestration, workbook validation, warning-register handling,
 status handling, and batch user-interface code is batch-repository-only. The
-separately authorized v1.1 release receives only the Tg 110 degC material-basis
-change and its derived temperature behavior.
+existing v1.1 repository, application, URL, and deployment remain outside this
+release scope.

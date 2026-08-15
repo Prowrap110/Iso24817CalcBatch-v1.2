@@ -13,14 +13,23 @@ from workbook_template import create_template_workbook
 
 _TEMPLATE_FILENAME = 'PROWRAP_Batch_Template.xlsx'
 _PROCESSED_BYTES_KEY = 'processed_workbook_bytes'
-_PROCESSED_HASH_KEY = 'processed_file_hash'
+_PROCESSED_IDENTITY_KEY = 'processed_source_identity'
 _PROCESSED_NAME_KEY = 'processed_workbook_name'
-_SOURCE_HASH_KEY = 'source_file_hash'
+_SOURCE_IDENTITY_KEY = 'source_identity'
 
 
 def _clear_processed_result() -> None:
-    for key in (_PROCESSED_BYTES_KEY, _PROCESSED_HASH_KEY, _PROCESSED_NAME_KEY):
+    for key in (_PROCESSED_BYTES_KEY, _PROCESSED_IDENTITY_KEY, _PROCESSED_NAME_KEY):
         st.session_state.pop(key, None)
+
+
+def _source_identity(data: bytes, filename: str) -> str:
+    """Bind uploaded workbook bytes to the exact filename used for processing."""
+    digest = hashlib.sha256()
+    digest.update(data)
+    digest.update(b'\0')
+    digest.update(filename.encode('utf-8'))
+    return digest.hexdigest()
 
 
 def _output_filename(processed_at: datetime) -> str:
@@ -88,17 +97,19 @@ def main() -> None:
     uploaded = st.file_uploader(
         'Upload the completed Excel template',
         type=['xlsx'],
-        help='Upload one controlled .xlsx workbook, up to 10 MB. Macros and formulas are not accepted.',
+        help='Upload one controlled .xlsx workbook, up to 10 MB. '
+        'Macros and uncontrolled formulas are rejected. Exact controlled Cost and Price '
+        'formulas in previously processed workbooks are accepted.',
     )
 
     inspection = None
     source_data = None
-    source_hash = None
+    source_identity = None
     if uploaded is not None:
         source_data = uploaded.getvalue()
-        source_hash = hashlib.sha256(source_data).hexdigest()
-        if st.session_state.get(_SOURCE_HASH_KEY) != source_hash:
-            st.session_state[_SOURCE_HASH_KEY] = source_hash
+        source_identity = _source_identity(source_data, uploaded.name)
+        if st.session_state.get(_SOURCE_IDENTITY_KEY) != source_identity:
+            st.session_state[_SOURCE_IDENTITY_KEY] = source_identity
             _clear_processed_result()
 
         st.caption(f'Uploaded file: {uploaded.name}')
@@ -151,11 +162,11 @@ def main() -> None:
             st.error('The batch could not be calculated safely. Please try a fresh template or contact PROTAP.')
         else:
             st.session_state[_PROCESSED_BYTES_KEY] = processed.workbook_bytes
-            st.session_state[_PROCESSED_HASH_KEY] = source_hash
+            st.session_state[_PROCESSED_IDENTITY_KEY] = source_identity
             st.session_state[_PROCESSED_NAME_KEY] = _output_filename(processed_at)
 
     processed_bytes = st.session_state.get(_PROCESSED_BYTES_KEY)
-    if processed_bytes and st.session_state.get(_PROCESSED_HASH_KEY) == source_hash:
+    if processed_bytes and st.session_state.get(_PROCESSED_IDENTITY_KEY) == source_identity:
         st.subheader('4. Calculate and download')
         st.success('Batch calculation is complete. Review the status counts and download the processed workbook.')
         if inspection is not None and not inspection.workbook_errors:
