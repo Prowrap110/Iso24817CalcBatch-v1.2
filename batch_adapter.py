@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from batch_schema import APPROVED_CLOTH_WIDTHS_MM, BatchInfo, ValidatedRow
+from batch_mechanisms import normalize_upload_mechanism
 from batch_status import CalculationStatus, classify_result
 from engine.prowrap_calculations import (
     apply_type_a_class3_result_to_repair,
@@ -43,6 +44,7 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
     """Calculate a validated row without translating unexpected failures."""
     values = row.values
     try:
+        mechanism = normalize_upload_mechanism(values['Mechanism'])
         result = calculate_repair(
             customer=batch_info.customer,
             location=batch_info.project_location,
@@ -52,7 +54,7 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
             yield_strength=values['Pipe Yield [MPa]'],
             pressure=values['Design Pressure [bar]'],
             temp=values['Operating Temperature [degC]'],
-            defect_type=values['Mechanism'],
+            defect_type=mechanism,
             defect_loc=values['Defect Location'],
             length=values['Defect Length [mm]'],
             rem_wall=values['Remaining Wall [mm]'],
@@ -157,6 +159,16 @@ def _map_outputs(
     result: dict[str, Any], warnings: tuple[str, ...], type_a_check_run: bool,
 ) -> dict[str, object]:
     b31g = result['b31g_details']
+    type_a_detail = None
+    if result.get('typea_design') is not None:
+        type_a_detail = {
+            'calculation_basis': result['calculation_basis'],
+            'allowable_pipe_stress_mpa': result['allowable_pipe_stress_mpa'],
+            'substrate_allowable_pressure_mpa': result['p_steel_capacity'],
+            'composite_pressure_deficit_mpa': result['p_composite_design'],
+            'baseline_typea_design': result.get('typea_design'),
+            'optional_class3_check': result.get('iso_typea_class3'),
+        }
     return {
         'Thickness Calculation Method': result['calc_method_thick'],
         'Overlap Calculation Method': result['calc_method_overlap'],
@@ -182,6 +194,6 @@ def _map_outputs(
         'Epoxy Mass [kg]': result['epoxy_kg'],
         'Compliance Warnings': warnings,
         'B31G Detail': b31g,
-        'Type A Detail': result.get('iso_typea_class3'),
+        'Type A Detail': type_a_detail,
         'Type B Detail': result['type_b_details'],
     }
