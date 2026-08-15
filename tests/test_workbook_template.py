@@ -185,6 +185,14 @@ def test_template_mechanism_choices_and_guidance_distinguish_dent_routes():
     assert 'not a complete dent integrity or fatigue acceptance assessment' in instruction_text
 
 
+def test_long_dent_instruction_has_room_for_every_wrapped_line():
+    """Catches the final legacy-migration sentence being clipped in row 15."""
+    instructions = _template_workbook()['Instructions']
+
+    assert instructions['A15'].alignment.wrap_text is True
+    assert instructions.row_dimensions[15].height >= 48
+
+
 def test_template_dropdowns_reject_invalid_selections_but_allow_unused_blank_rows():
     """Catches validations that block a blank unused row or silently accept bad selections."""
     workbook = _template_workbook()
