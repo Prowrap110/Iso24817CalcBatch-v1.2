@@ -11,11 +11,14 @@ from batch_schema import (
     ValidatedRow,
     ValidationIssue,
 )
+from batch_mechanisms import (
+    ACCEPTED_UPLOAD_MECHANISMS,
+    normalize_upload_mechanism,
+)
 
 
 _COMMON_HEADERS = ('Customer', 'Project Location', 'Report No')
 _SELECTIONS = {
-    'Mechanism': ('Corrosion', 'Dent', 'Leak', 'Crack'),
     'Defect Location': ('External', 'Internal'),
     'Run Type A / Class 3 Check': ('Yes', 'No'),
     'Component Type': ('Straight', 'Bend', 'Tee', 'Flange', 'Reducer'),
@@ -85,6 +88,16 @@ def validate_row(
         raw_value = values.get(header)
         if _is_formula(raw_value):
             issues.append(_issue('FORMULA_NOT_ALLOWED', header, 'formulas are not allowed'))
+            continue
+
+        if header == 'Mechanism':
+            text = '' if raw_value is None else str(raw_value).strip()
+            if not text:
+                issues.append(_issue('REQUIRED_VALUE', header, 'a value is required'))
+            elif text not in ACCEPTED_UPLOAD_MECHANISMS:
+                issues.append(_issue('INVALID_SELECTION', header, 'is not an allowed selection'))
+            else:
+                normalized[header] = normalize_upload_mechanism(text)
             continue
 
         if header in _SELECTIONS:

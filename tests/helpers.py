@@ -53,7 +53,7 @@ def validated_row(**overrides):
     return row
 
 
-def workbook_bytes_with_rows(rows):
+def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
     """Create a controlled template populated with test defect rows."""
     from io import BytesIO
 
@@ -71,6 +71,10 @@ def workbook_bytes_with_rows(rows):
     for excel_row, values in enumerate(rows, start=2):
         for column, header in enumerate(INPUT_HEADERS, start=1):
             data.cell(excel_row, column, values.get(header))
+    if commercial_inputs:
+        cost = workbook['Cost Calculation']
+        for address, value in commercial_inputs.items():
+            cost[address] = value
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()

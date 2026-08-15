@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - exercised where lxml is unavailable.
     XMLSyntaxError = ParseError
 
 from batch_adapter import RowCalculation, calculate_row
+from batch_mechanisms import normalize_upload_mechanism
 from batch_schema import (
     INPUT_HEADERS,
     MAX_ROWS,
@@ -166,7 +167,7 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     invalid_rows = 0
     preview: list[dict[str, object]] = []
     for excel_row, values in populated:
-        _, issues = validate_row(excel_row, values)
+        row, issues = validate_row(excel_row, values)
         if issues:
             invalid_rows += 1
             status = CalculationStatus.INPUT_ERROR.value
@@ -187,7 +188,9 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
             preview.append({
                 'Source Excel Row': excel_row,
                 'Pipe OD [mm]': values['Pipe OD [mm]'],
-                'Mechanism': values['Mechanism'],
+                'Mechanism': (
+                    row.values['Mechanism'] if row is not None else values['Mechanism']
+                ),
                 'Defect Location': values['Defect Location'],
                 'Calculation Status': status,
                 'Error Code': error_code,
@@ -745,9 +748,13 @@ def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
 
     source_data = source_workbook['Batch Input & Results']
     output_data = output_workbook['Batch Input & Results']
+    mechanism_column = INPUT_HEADERS.index('Mechanism') + 1
     for excel_row in range(2, MAX_ROWS + 2):
         for column in range(1, len(INPUT_HEADERS) + 1):
-            output_data.cell(excel_row, column).value = source_data.cell(excel_row, column).value
+            value = source_data.cell(excel_row, column).value
+            if column == mechanism_column:
+                value = normalize_upload_mechanism(value)
+            output_data.cell(excel_row, column).value = value
 
     if 'Cost Calculation' in source_workbook.sheetnames:
         source_cost = source_workbook['Cost Calculation']

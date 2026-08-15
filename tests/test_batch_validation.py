@@ -46,6 +46,31 @@ def test_valid_row_normalizes_numeric_inputs_and_keeps_source_row():
     assert row.values['Design Life [years]'] == 20
 
 
+@pytest.mark.parametrize('mechanism', ['Dent w/crack', 'Dent no-crack'])
+def test_accepts_canonical_dent_mechanisms(mechanism):
+    row, issues = validate_row(2, valid_row_values(Mechanism=mechanism))
+
+    assert issues == ()
+    assert row is not None
+    assert row.values['Mechanism'] == mechanism
+
+
+def test_legacy_dent_is_conservatively_normalized():
+    row, issues = validate_row(2, valid_row_values(Mechanism=' Dent '))
+
+    assert issues == ()
+    assert row is not None
+    assert row.values['Mechanism'] == 'Dent w/crack'
+
+
+@pytest.mark.parametrize('mechanism', ['dent', 'Dent no crack', 'Dent/crack'])
+def test_ambiguous_dent_spellings_are_rejected(mechanism):
+    row, issues = validate_row(2, valid_row_values(Mechanism=mechanism))
+
+    assert row is None
+    assert [issue.code for issue in issues] == ['INVALID_SELECTION']
+
+
 def test_remaining_wall_cannot_exceed_nominal_wall():
     row, issues = validate_row(2, valid_row_values(**{
         'Remaining Wall [mm]': 10.0,

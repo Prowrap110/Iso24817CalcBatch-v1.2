@@ -6,7 +6,9 @@ import pytest
 from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
+from batch_adapter import RowCalculation
 from batch_schema import INPUT_HEADERS, MAX_ROWS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
+from batch_status import CalculationStatus
 from cost_calculation import COST_TABLE_HEADERS, cost_formula, price_formula
 from tests.helpers import valid_row_values, workbook_bytes_with_rows
 from workbook_processor import (
@@ -51,6 +53,74 @@ def test_inspects_a_valid_template_and_previews_populated_rows():
         'Error Code': '',
         'Error Message': '',
     },)
+
+
+def _capture_successful_mechanisms(monkeypatch):
+    import workbook_processor
+
+    received = []
+
+    def calculate_successfully(_batch_info, row):
+        received.append(row.values['Mechanism'])
+        return RowCalculation(
+            source_excel_row=row.source_excel_row,
+            status=CalculationStatus.OK,
+            outputs={},
+        )
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', calculate_successfully)
+    return received
+
+
+def test_legacy_dent_is_canonical_through_preview_processing_and_reupload(monkeypatch):
+    """Catches old Dent uploads leaking the legacy name past the workbook boundary."""
+    received = _capture_successful_mechanisms(monkeypatch)
+    source = workbook_bytes_with_rows(
+        [valid_row_values(Mechanism='Dent')],
+        commercial_inputs={'B3': 50.0, 'E3': 20.0, 'H3': 1.5},
+    )
+
+    inspection = inspect_workbook(source)
+    first = process_workbook(source, processed_at=FIXED_TIME)
+    first_workbook = _workbook(first.workbook_bytes)
+    reinspection = inspect_workbook(first.workbook_bytes)
+    second = process_workbook(first.workbook_bytes, processed_at=FIXED_TIME)
+    second_workbook = _workbook(second.workbook_bytes)
+
+    assert inspection.preview[0]['Mechanism'] == 'Dent w/crack'
+    assert reinspection.preview[0]['Mechanism'] == 'Dent w/crack'
+    assert received and set(received) == {'Dent w/crack'}
+    assert first_workbook['Batch Input & Results']['F2'].value == 'Dent w/crack'
+    assert first_workbook['Cost Calculation']['F6'].value == 'Dent w/crack'
+    assert second_workbook['Batch Input & Results']['F2'].value == 'Dent w/crack'
+    assert second_workbook['Cost Calculation']['F6'].value == 'Dent w/crack'
+    assert first_workbook['Batch Input & Results']['A2'].value == 457.2
+    assert first_workbook['Batch Input & Results']['R2'].value == 300.0
+    assert first_workbook['Batch Information']['B3'].value == 'Batch Customer'
+    assert [second_workbook['Cost Calculation'][address].value for address in (
+        'B3', 'E3', 'H3',
+    )] == [50.0, 20.0, 1.5]
+
+
+def test_dent_no_crack_is_stable_through_preview_processing_and_reupload(monkeypatch):
+    """Catches a current uncracked-dent choice being changed at the workbook boundary."""
+    received = _capture_successful_mechanisms(monkeypatch)
+    source = workbook_bytes_with_rows([valid_row_values(Mechanism='Dent no-crack')])
+
+    inspection = inspect_workbook(source)
+    first = process_workbook(source, processed_at=FIXED_TIME)
+    first_workbook = _workbook(first.workbook_bytes)
+    reinspection = inspect_workbook(first.workbook_bytes)
+    second = process_workbook(first.workbook_bytes, processed_at=FIXED_TIME)
+    second_workbook = _workbook(second.workbook_bytes)
+
+    assert inspection.preview[0]['Mechanism'] == 'Dent no-crack'
+    assert reinspection.preview[0]['Mechanism'] == 'Dent no-crack'
+    assert received and set(received) == {'Dent no-crack'}
+    assert first_workbook['Batch Input & Results']['F2'].value == 'Dent no-crack'
+    assert first_workbook['Cost Calculation']['F6'].value == 'Dent no-crack'
+    assert second_workbook['Batch Input & Results']['F2'].value == 'Dent no-crack'
+    assert second_workbook['Cost Calculation']['F6'].value == 'Dent no-crack'
 
 
 def test_preview_uses_the_same_qualification_review_status_as_processing():
