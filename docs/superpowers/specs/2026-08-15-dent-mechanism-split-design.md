@@ -1,6 +1,6 @@
 # PROWRAP Dent Mechanism Split Design
 
-**Status:** Approved in principle; written specification pending user review.
+**Status:** Approved by Mehmet Can Erden on 2026-08-15.
 
 **Date:** 2026-08-15
 
