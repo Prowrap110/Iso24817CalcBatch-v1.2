@@ -425,19 +425,21 @@ asserts the rendered mechanism and basis text. For `Dent w/crack`, assert nine
 plies for the approved representative vector; for `Dent no-crack`, assert
 three plies and the displayed `S_allow` and `p_s` values.
 
-### Step 2: Write failing PDF/report-source tests
+### Step 2: Write failing PDF/report behavior tests
 
-Extend `test_report_wording.py` to assert:
+Replace the existing source-text assertion in `test_report_wording.py` with
+behavioral tests. For each dent result, call the real `create_pdf()`, verify the
+returned bytes start with `%PDF`, extract the page text with `pypdf.PdfReader`,
+and assert the user-visible report contains:
 
-- both exact dent basis strings are present in the report code;
-- the PDF uses `calculation_basis` and dynamic substrate wording;
-- the current unconditional statement that substrate MAWP is always from
-  B31G is removed;
-- the preliminary-engineering disclaimer remains unchanged.
+- the applicable exact dent calculation-basis string;
+- the applicable allowable-stress, substrate-pressure, and pressure-deficit
+  values;
+- no statement that B31G supplies dent substrate capacity;
+- the existing preliminary-engineering disclaimer.
 
-Test `create_pdf()` with each dent result where practical, and verify the
-returned bytes start with `%PDF` so the dynamic fields do not break report
-generation.
+These tests must exercise the generated report. Do not search
+`PWR110Calculator.py` source text or assert on an FPDF mock.
 
 ### Step 3: Run focused tests and confirm RED
 
