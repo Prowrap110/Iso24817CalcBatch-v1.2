@@ -151,6 +151,40 @@ def test_template_adds_dropdowns_for_every_selection_through_row_501():
     assert validations == expected_choices
 
 
+def test_template_mechanism_choices_and_guidance_distinguish_dent_routes():
+    """Catch a new template that restores ambiguous Dent or hides route limits."""
+    workbook = _template_workbook()
+    data = workbook['Batch Input & Results']
+    lists = workbook['Lists']
+
+    mechanism_values = [lists.cell(row, 1).value for row in range(1, 6)]
+    assert mechanism_values == [
+        'Corrosion', 'Dent w/crack', 'Dent no-crack', 'Leak', 'Crack',
+    ]
+    assert 'Dent' not in mechanism_values
+    assert data['F1'].comment is not None
+    mechanism_note = data['F1'].comment.text.lower()
+    assert 'dent w/crack' in mechanism_note
+    assert 'full-pressure laminate' in mechanism_note
+    assert 'dent no-crack' in mechanism_note
+    assert 'component-pipe substrate load sharing' in mechanism_note
+
+    instruction_text = ' '.join(
+        str(cell.value).lower()
+        for row in workbook['Instructions'].iter_rows()
+        for cell in row
+        if cell.value is not None
+    )
+    assert 'dent w/crack' in instruction_text
+    assert 'full-pressure laminate' in instruction_text
+    assert 'dent no-crack' in instruction_text
+    assert 'component-pipe substrate load sharing' in instruction_text
+    assert 'legacy dent' in instruction_text
+    assert 'older batch workbook' in instruction_text
+    assert 'becomes dent w/crack' in instruction_text
+    assert 'not a complete dent integrity or fatigue acceptance assessment' in instruction_text
+
+
 def test_template_dropdowns_reject_invalid_selections_but_allow_unused_blank_rows():
     """Catches validations that block a blank unused row or silently accept bad selections."""
     workbook = _template_workbook()

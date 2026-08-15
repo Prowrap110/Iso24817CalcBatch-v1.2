@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from io import BytesIO
+import json
 
 from openpyxl import load_workbook
+import pytest
 
 import batch_adapter
 from batch_schema import INPUT_HEADERS, OUTPUT_HEADERS
@@ -33,6 +35,14 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
     assert [input_sheet.cell(row, 1).value for row in range(2, 8)] == [
         457.2, 457.2, 457.2, 457.2, 457.2, 457.2,
     ]
+    mechanism_column = INPUT_HEADERS.index('Mechanism') + 1
+    remaining_wall_column = INPUT_HEADERS.index('Remaining Wall [mm]') + 1
+    assert [input_sheet.cell(row, mechanism_column).value for row in (2, 7)] == [
+        'Dent w/crack', 'Dent no-crack',
+    ]
+    assert [input_sheet.cell(row, remaining_wall_column).value for row in (2, 7)] == [
+        9.53, 9.53,
+    ]
     assert input_sheet.cell(7, INPUT_HEADERS.index('Prowrap CF Cloth Width [mm]') + 1).value == 500.0
 
     calls = []
@@ -59,6 +69,36 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
         'OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE',
         'INPUT ERROR', 'REVIEW REQUIRED', 'OK',
     ]
+    assert [result_sheet.cell(row, mechanism_column).value for row in (2, 7)] == [
+        'Dent w/crack', 'Dent no-crack',
+    ]
+    expected_no_crack_capacity_bar = (
+        2.0 * (359.0 * 0.72) * 9.53 / 457.2 * 10.0
+    )
+    assert result_sheet.cell(2, output_column['Effective Pipe Capacity [bar]']).value == 0.0
+    assert result_sheet.cell(2, output_column['Composite Pressure Deficit [bar]']).value == 50.0
+    assert result_sheet.cell(2, output_column['Installed Plies']).value == 9
+    assert result_sheet.cell(
+        7, output_column['Effective Pipe Capacity [bar]'],
+    ).value == pytest.approx(expected_no_crack_capacity_bar)
+    assert result_sheet.cell(7, output_column['Composite Pressure Deficit [bar]']).value == 0.0
+    assert result_sheet.cell(7, output_column['Installed Plies']).value == 3
+
+    cracked_detail = json.loads(result_sheet.cell(2, output_column['Type A Detail']).value)
+    no_crack_detail = json.loads(result_sheet.cell(7, output_column['Type A Detail']).value)
+    assert cracked_detail['calculation_basis'] == (
+        'Dent w/crack - full-pressure laminate'
+    )
+    assert cracked_detail['substrate_allowable_pressure_mpa'] == 0.0
+    assert cracked_detail['composite_pressure_deficit_mpa'] == 5.0
+    assert no_crack_detail['calculation_basis'] == (
+        'Dent no-crack - substrate load sharing'
+    )
+    assert no_crack_detail['allowable_pipe_stress_mpa'] == pytest.approx(258.48)
+    assert no_crack_detail['substrate_allowable_pressure_mpa'] == pytest.approx(
+        expected_no_crack_capacity_bar / 10.0,
+    )
+    assert no_crack_detail['composite_pressure_deficit_mpa'] == 0.0
     # Preview and processing use the same engine path so the user sees the
     # final row status before generating the download.
     assert calls == [COMMON_INFO] * 10
@@ -102,6 +142,9 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
             result_sheet.cell(result_row, source_column).value
             for _, source_column in expected_cost_mapping
         ]
+    assert [cost_sheet.cell(row, 6).value for row in (6, 11)] == [
+        'Dent w/crack', 'Dent no-crack',
+    ]
 
     assert [cost_sheet[address].value for address in ('B3', 'E3', 'H3')] == [
         None, None, None,
@@ -188,6 +231,13 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
     rebuilt_cost = rebuilt_book['Cost Calculation']
     assert [rebuilt_cost[address].value for address in ('B3', 'E3', 'H3')] == [
         25.0, 8.0, 1.4,
+    ]
+    rebuilt_result = rebuilt_book['Batch Input & Results']
+    assert [rebuilt_result.cell(row, mechanism_column).value for row in (2, 7)] == [
+        'Dent w/crack', 'Dent no-crack',
+    ]
+    assert [rebuilt_cost.cell(row, 6).value for row in (6, 11)] == [
+        'Dent w/crack', 'Dent no-crack',
     ]
     rebuilt_formulas = [
         (f'{worksheet.title}!{cell.coordinate}', cell.value)

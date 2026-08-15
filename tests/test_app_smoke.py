@@ -29,6 +29,27 @@ def test_app_starts_with_template_and_upload_actions():
     assert any('Upload workbook' in heading.value for heading in app.subheader)
 
 
+def test_app_lists_canonical_dents_and_explains_legacy_migration():
+    """Catch ambiguous new choices or migration of old Dent to a credited route."""
+    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()
+    captions = [caption.value for caption in app.caption]
+
+    assert any(
+        'Supported mechanisms: Corrosion, Dent w/crack, Dent no-crack, Leak, and Crack.'
+        in caption
+        for caption in captions
+    )
+    assert not any(
+        'Supported mechanisms: Corrosion, Dent, Leak, and Crack.' in caption
+        for caption in captions
+    )
+    assert any(
+        'Old controlled batch workbooks containing generic Dent are interpreted '
+        'conservatively as Dent w/crack.' in caption
+        for caption in captions
+    )
+
+
 def test_uploader_help_distinguishes_rejected_and_controlled_formulas():
     """Catch guidance that incorrectly says every formula-bearing workbook is rejected."""
     app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()

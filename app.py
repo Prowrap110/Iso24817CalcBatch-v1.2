@@ -90,7 +90,11 @@ def main() -> None:
     )
     st.caption(
         'Use millimetres, MPa, bar, degC, years, m2, and kg as labelled. '
-        'Supported mechanisms: Corrosion, Dent, Leak, and Crack.'
+        'Supported mechanisms: Corrosion, Dent w/crack, Dent no-crack, Leak, and Crack.'
+    )
+    st.caption(
+        'Old controlled batch workbooks containing generic Dent are interpreted '
+        'conservatively as Dent w/crack.'
     )
 
     st.subheader('2. Upload workbook')

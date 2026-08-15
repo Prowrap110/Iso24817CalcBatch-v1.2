@@ -11,6 +11,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.workbook.defined_name import DefinedName
 
+from batch_mechanisms import CANONICAL_MECHANISMS
 from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
 from cost_calculation import COST_INPUTS, COST_TABLE_HEADERS
 from workbook_formatting import (
@@ -30,7 +31,7 @@ from workbook_formatting import (
 
 
 _CHOICES = {
-    'MechanismChoices': ('Mechanism', ('Corrosion', 'Dent', 'Leak', 'Crack')),
+    'MechanismChoices': ('Mechanism', CANONICAL_MECHANISMS),
     'DefectLocationChoices': ('Defect Location', ('External', 'Internal')),
     'TypeACheckChoices': ('Run Type A / Class 3 Check', ('Yes', 'No')),
     'ComponentTypeChoices': (
@@ -45,7 +46,11 @@ _HEADER_NOTES = {
     'Pipe Yield [MPa]': 'Required. Enter the specified pipe yield strength in MPa; value must be positive.',
     'Design Pressure [bar]': 'Required. Enter the design pressure in bar; zero or a positive value.',
     'Operating Temperature [degC]': 'Required. Enter the operating temperature in degrees C.',
-    'Mechanism': 'Required. Choose Corrosion, Dent, Leak, or Crack.',
+    'Mechanism': (
+        'Required. Dent w/crack uses a full-pressure laminate. An eligible external '
+        'Dent no-crack uses component-pipe substrate load sharing. Legacy Dent is '
+        'accepted only when upgrading an older batch workbook and becomes Dent w/crack.'
+    ),
     'Defect Location': 'Required. Choose External or Internal.',
     'Defect Length [mm]': 'Required. Enter the defect length in millimetres; value must be positive.',
     'Remaining Wall [mm]': 'Required. Enter the minimum remaining wall in millimetres; it cannot exceed nominal wall.',
@@ -296,6 +301,7 @@ def _build_instructions(worksheet) -> None:
         ('A12', '10. Price = Cost x Price Multiplier. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
         ('A13', '11. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost and Price formulas and may be safely uploaded again.', False),
         ('A14', '12. Previously downloaded controlled five-sheet and six-sheet workbooks remain accepted and are upgraded to the current seven-sheet output.', False),
+        ('A15', '13. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
         ('A16', 'Status meanings', True),
         ('A17', 'OK — a valid result with no review warning.', False),
         ('A18', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),

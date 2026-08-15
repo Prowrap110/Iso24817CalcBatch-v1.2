@@ -66,12 +66,21 @@ def create_acceptance_workbook(destination: str | Path) -> Path:
 
 def _acceptance_rows() -> tuple[dict[str, object], ...]:
     return (
-        _BASELINE_ROW,
+        {
+            **_BASELINE_ROW,
+            'Mechanism': 'Dent w/crack',
+            'Remaining Wall [mm]': 9.53,
+        },
         {**_BASELINE_ROW, 'Prowrap CF Cloth Width [mm]': 250.0},
         {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 150.0},
         {**_BASELINE_ROW, 'Remaining Wall [mm]': 12.0},
         {**_BASELINE_ROW, 'Mechanism': 'Leak', 'Design Pressure [bar]': 0.0},
-        {**_BASELINE_ROW, 'Prowrap CF Cloth Width [mm]': 500.0},
+        {
+            **_BASELINE_ROW,
+            'Mechanism': 'Dent no-crack',
+            'Remaining Wall [mm]': 9.53,
+            'Prowrap CF Cloth Width [mm]': 500.0,
+        },
     )
 
 
