@@ -18,6 +18,35 @@ The copied modules are:
 - `prowrap_materials.py`
 - `prowrap_mechanisms.py`
 
+## Verified v1.2 corrosion-engine port
+
+The external-corrosion assessment route was ported from verified source revision
+`91b68d64508a4786934f0e17f2aea0dbebf745a7` in the separate
+`Iso24817Calcv1.2` checkout. The source files were `corrosion_defects.py` and
+`prowrap_calculations.py`.
+
+The batch engine retains the verified v1.2 defect-length bases: `Actual defect
+length`, `Independent defects`, and `Enter manually`. It assesses every
+candidate B31G length/remaining-wall pair independently, uses the least
+creditable candidate as governing, and preserves the full entered repair-zone
+length for ISO axial extent.
+
+The following batch-only behaviors are intentionally retained rather than
+replaced by the source module:
+
+- `allow_unqualified_temperature=False` remains the engine default, with the
+  batch adapter's high-temperature review-warning path unchanged.
+- Zero-pressure Type B handling retains the batch three-ply review warning and
+  the two-year service-life warning without dereferencing Formula 12 details.
+- The 300 mm and 500 mm cloth-width configurations retain the batch 50 mm
+  stitching-overlap procurement behavior.
+- Existing dent mechanism routing and strict unsupported axial-load validation
+  remain batch behavior; the v1.2 corrosion basis applies only to external
+  corrosion.
+
+Workbook version and emitted source-revision fields remain unchanged in this
+task; the processor revision update is deferred to its dedicated task.
+
 ## Approved dent mechanism split
 
 The former generic `Dent` engine route is split into two canonical mechanisms:

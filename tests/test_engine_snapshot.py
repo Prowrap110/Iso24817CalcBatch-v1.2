@@ -20,3 +20,24 @@ def test_pinned_engine_revision_is_emitted_in_processed_workbook():
 
     assert workbook['Summary']['B24'].value == '1.2.0'
     assert workbook['Summary']['B25'].value == '746f3b3'
+
+
+def test_pinned_engine_exposes_v12_corrosion_assessment_contract():
+    from engine import (
+        ACTUAL_DEFECT_LENGTH,
+        DEFECT_LENGTH_BASES,
+        IndividualCorrosionDefect,
+        build_corrosion_assessment_plan,
+    )
+
+    plan = build_corrosion_assessment_plan(
+        basis=ACTUAL_DEFECT_LENGTH,
+        repair_zone_length_mm=100.0,
+        nominal_wall_mm=12.0,
+        default_remaining_wall_mm=9.0,
+    )
+
+    assert DEFECT_LENGTH_BASES[0] == ACTUAL_DEFECT_LENGTH
+    assert plan.candidates == (
+        IndividualCorrosionDefect("Actual/combined defect", 100.0, 9.0, True),
+    )
