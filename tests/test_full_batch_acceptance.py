@@ -7,6 +7,7 @@ import pytest
 
 import batch_adapter
 from batch_schema import INPUT_HEADERS, OUTPUT_HEADERS
+from cost_calculation import COST_SOURCE_HEADERS
 from workbook_processor import process_workbook
 
 
@@ -106,41 +107,25 @@ def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
     assert result_book['Batch Information']['B4'].value == 'Acceptance Location'
     assert result_book['Batch Information']['B5'].value == 'ACCEPT-001'
     assert result_book.sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
-        'Warnings', 'Summary', 'Instructions', 'Lists',
+        'Batch Information', 'Batch Input & Results', 'Individual Defects',
+        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
+    assert result_book['Summary']['B24'].value == '1.2.0'
+    assert result_book['Summary']['B25'].value == '91b68d6'
 
     cost_sheet = result_book['Cost Calculation']
-    expected_cost_mapping = (
-        ('Pipe OD [mm]', 1),
-        ('Nominal Wall [mm]', 2),
-        ('Pipe Yield [MPa]', 3),
-        ('Design Pressure [bar]', 4),
-        ('Operating Temperature [degC]', 5),
-        ('Mechanism', 6),
-        ('Defect Location', 7),
-        ('Defect Length [mm]', 8),
-        ('Remaining Wall [mm]', 9),
-        ('Design Life [years]', 11),
-        ('Design Factor', 12),
-        ('Prowrap CF Cloth Width [mm]', 18),
-        ('Wall Loss [%]', 29),
-        ('Required Structural Thickness [mm]', 36),
-        ('Installed Plies', 37),
-        ('Total Repair Length [mm]', 44),
-        ('Cloth Band Count', 45),
-        ('Procurement Axial Length [mm]', 46),
-        ('Fabric Area [m2]', 47),
-        ('Epoxy Mass [kg]', 48),
-    )
+    source_columns = {
+        header: column
+        for column, header in enumerate(INPUT_HEADERS + OUTPUT_HEADERS, start=1)
+    }
     assert tuple(cost_sheet.cell(5, column).value for column in range(1, 21)) == tuple(
-        heading for heading, _ in expected_cost_mapping
+        COST_SOURCE_HEADERS
     )
     assert (cost_sheet['U5'].value, cost_sheet['V5'].value) == ('Cost', 'Price')
     for cost_row, result_row in zip(range(6, 12), range(2, 8), strict=True):
         assert [cost_sheet.cell(cost_row, column).value for column in range(1, 21)] == [
-            result_sheet.cell(result_row, source_column).value
-            for _, source_column in expected_cost_mapping
+            result_sheet.cell(result_row, source_columns[header]).value
+            for header in COST_SOURCE_HEADERS
         ]
     assert [cost_sheet.cell(row, 6).value for row in (6, 11)] == [
         'Dent w/crack', 'Dent no-crack',

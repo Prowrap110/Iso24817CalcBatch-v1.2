@@ -1,6 +1,6 @@
 """Controlled commercial worksheet contract for PROWRAP batch workbooks."""
 
-from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
+from batch_schema import MAX_ROWS
 
 
 COST_INPUTS = (
@@ -9,16 +9,29 @@ COST_INPUTS = (
     ('H3', 'Price Multiplier'),
 )
 
-# Preserve the requested A:I, K, L, R, AC, AJ, AK, AR:AV source order while
-# tying every heading to the canonical batch workbook schema.
+# These are semantic source names, deliberately independent of the insertion
+# points in the v1.2 main input and output schemas.
 COST_SOURCE_HEADERS = (
-    INPUT_HEADERS[:9]
-    + INPUT_HEADERS[10:12]
-    + (INPUT_HEADERS[17],)
-    + tuple(
-        OUTPUT_HEADERS[index]
-        for index in (10, 17, 18, 25, 26, 27, 28, 29)
-    )
+    'Pipe OD [mm]',
+    'Nominal Wall [mm]',
+    'Pipe Yield [MPa]',
+    'Design Pressure [bar]',
+    'Operating Temperature [degC]',
+    'Mechanism',
+    'Defect Location',
+    'Defect Length [mm]',
+    'Remaining Wall [mm]',
+    'Design Life [years]',
+    'Design Factor',
+    'Prowrap CF Cloth Width [mm]',
+    'Wall Loss [%]',
+    'Required Structural Thickness [mm]',
+    'Installed Plies',
+    'Total Repair Length [mm]',
+    'Cloth Band Count',
+    'Procurement Axial Length [mm]',
+    'Fabric Area [m2]',
+    'Epoxy Mass [kg]',
 )
 COST_TABLE_HEADERS = COST_SOURCE_HEADERS + ('Cost', 'Price')
 

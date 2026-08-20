@@ -59,12 +59,12 @@ from cost_calculation import (
     price_formula,
 )
 from workbook_template import create_template_workbook
-from warning_catalog import warning_meaning
+from warning_catalog import format_affected_rows, warning_meaning
 from engine.corrosion_defects import ACTUAL_DEFECT_LENGTH, ENTER_MANUALLY
 
 
 BATCH_ENGINE_VERSION = '1.2.0'
-SOURCE_ENGINE_REVISION = '746f3b3'
+SOURCE_ENGINE_REVISION = '91b68d6'
 _COMMON_HEADERS = ('Customer', 'Project Location', 'Report No')
 _LEGACY_SHEETS = (
     'Batch Information',
@@ -921,21 +921,35 @@ def _write_warnings_sheet(workbook) -> None:
     """Build one consolidated, permanent warning register for the batch."""
     warnings_sheet = workbook['Warnings']
     data_sheet = workbook['Batch Input & Results']
-    warning_column = len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Compliance Warnings') + 1
-    source_row_column = len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Source Excel Row') + 1
-    affected_rows: dict[str, list[int]] = {}
-    for excel_row, _ in _populated_rows(data_sheet):
-        value = data_sheet.cell(excel_row, warning_column).value
-        if not isinstance(value, str) or not value.strip():
-            continue
-        source_row = data_sheet.cell(excel_row, source_row_column).value
-        for code in (item.strip() for item in value.split(',')):
-            if not code:
+    detail_sheet = workbook['Individual Defects']
+    affected_rows: dict[str, dict[str, list[int]]] = {}
+
+    def collect(worksheet, warning_column: int, source_row_column: int, location: str) -> None:
+        for excel_row, _ in _populated_rows(worksheet):
+            value = worksheet.cell(excel_row, warning_column).value
+            if not isinstance(value, str) or not value.strip():
                 continue
-            warning_meaning(code)
-            rows = affected_rows.setdefault(code, [])
-            if source_row not in rows:
-                rows.append(source_row)
+            source_row = worksheet.cell(excel_row, source_row_column).value
+            for code in (item.strip() for item in value.split(',')):
+                if not code:
+                    continue
+                warning_meaning(code)
+                rows = affected_rows.setdefault(code, {'main': [], 'detail': []})[location]
+                if source_row not in rows:
+                    rows.append(source_row)
+
+    collect(
+        data_sheet,
+        len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Compliance Warnings') + 1,
+        len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Source Excel Row') + 1,
+        'main',
+    )
+    collect(
+        detail_sheet,
+        len(DETAIL_INPUT_HEADERS) + DETAIL_OUTPUT_HEADERS.index('Assessment Warning Codes') + 1,
+        len(DETAIL_INPUT_HEADERS) + DETAIL_OUTPUT_HEADERS.index('Source Excel Row') + 1,
+        'detail',
+    )
 
     if not affected_rows:
         return
@@ -945,7 +959,11 @@ def _write_warnings_sheet(workbook) -> None:
         warnings_sheet.cell(output_row, 1, code)
         warnings_sheet.cell(output_row, 2, warning_meaning(code))
         warnings_sheet.cell(
-            output_row, 3, ', '.join(str(row) for row in sorted(affected_rows[code])),
+            output_row,
+            3,
+            format_affected_rows(
+                affected_rows[code]['main'], affected_rows[code]['detail'],
+            ),
         )
         for column in range(1, 4):
             cell = warnings_sheet.cell(output_row, column)

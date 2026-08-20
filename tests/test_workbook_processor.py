@@ -1176,7 +1176,7 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     assert summary['B10'].value == 1
     assert summary['B15'].value == 1
     assert summary['B24'].value == '1.2.0'
-    assert summary['B25'].value == '746f3b3'
+    assert summary['B25'].value == '91b68d6'
 
 
 def test_processed_workbook_records_the_sanitized_uploaded_source_name():

@@ -9,7 +9,7 @@ from cost_calculation import (
 )
 
 
-def test_cost_contract_uses_the_requested_source_columns_in_order():
+def test_cost_source_headers_survive_inserted_v12_columns():
     assert COST_SOURCE_HEADERS == (
         'Pipe OD [mm]', 'Nominal Wall [mm]', 'Pipe Yield [MPa]',
         'Design Pressure [bar]', 'Operating Temperature [degC]',
