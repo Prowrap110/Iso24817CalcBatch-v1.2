@@ -50,3 +50,29 @@ processor cases and exceeded the environment's 30-second command window here;
 the focused new/changed tests and import/compile/collection checks above were
 run successfully.  Task 3 must update the out-of-scope acceptance assertions
 that intentionally still inspect removed main diagnostic columns.
+
+## Fix round 1 — reviewer findings
+
+RED:
+
+- `python3 -m pytest -q tests/test_workbook_processor.py -k formula_anywhere_in_the_controlled_workbook_is_rejected -x` failed for `Batch Input & Results!AY501`: expected `FORMULA_NOT_ALLOWED`, actual `INVALID_INPUT_HEADERS`.
+
+Changes:
+
+- Moved formula scanning ahead of header/structure validation in
+  `inspect_workbook`, preserving formula-anywhere safety priority even when a
+  sparse off-table formula expands the sheet dimension.
+- Replaced the stale main status-formatting test: the main sheet now asserts no
+  `containsText` status rules, while Individual Defects retains all five status
+  rules.
+- Removed the unused `linked_detail_rows` assignment.
+
+GREEN / verification:
+
+- Formula-anywhere regression parametrization — 2 passed.
+- Individual Defects-only status-formatting regression — 1 passed.
+- `py_compile` for changed production/test modules — passed.
+- `git diff --check` — passed.
+- A full `tests/test_workbook_template.py` invocation was started as requested
+  but again crossed the environment's 30-second command limit before a final
+  summary could be returned; the targeted regression passed independently.

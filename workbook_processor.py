@@ -219,6 +219,10 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
         return _empty_inspection(errors)
 
     assert workbook is not None
+    formula_errors = _formula_errors(workbook)
+    if formula_errors:
+        return _empty_inspection(formula_errors)
+
     header_summary = _input_header_summary(workbook)
     detail_header_summary = _detail_input_header_summary(workbook)
     contract, structure_errors = _validate_structure(workbook)
@@ -233,11 +237,6 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
         header: info_sheet.cell(row, 2).value
         for row, header in enumerate(_COMMON_HEADERS, start=3)
     }
-    formula_errors = _formula_errors(workbook)
-    if formula_errors:
-        return _empty_inspection(
-            formula_errors, header_summary, detail_header_summary,
-        )
     commercial_input_errors = _commercial_input_errors(workbook)
     if commercial_input_errors:
         return _empty_inspection(
@@ -375,9 +374,6 @@ def process_workbook(
                 ),
             )
         calculations[excel_row] = calculation
-        linked_detail_rows = prepared.links.detail_rows_by_main_excel_row.get(
-            excel_row, (),
-        )
         _write_result_row(
             data_sheet,
             excel_row,

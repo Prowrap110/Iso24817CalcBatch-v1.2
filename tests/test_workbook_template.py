@@ -317,17 +317,25 @@ def test_protected_main_sheet_keeps_inputs_selectable_and_table_filterable():
     assert table.autoFilter.ref == table.ref
 
 
-def test_template_has_status_colors_in_conditional_formatting():
-    """Catches a template that gives row statuses no visual review signal."""
+def test_template_keeps_status_colors_only_for_individual_defect_audits():
+    """Catches status formatting returning after its main result column was removed."""
     workbook = _template_workbook()
     data = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
 
-    rules = [
+    main_rules = [
         rule
         for rules in data.conditional_formatting._cf_rules.values()
         for rule in rules
     ]
-    status_rules = [rule for rule in rules if rule.type == 'containsText']
+    detail_rules = [
+        rule
+        for rules in detail.conditional_formatting._cf_rules.values()
+        for rule in rules
+    ]
+    status_rules = [rule for rule in detail_rules if rule.type == 'containsText']
+
+    assert not [rule for rule in main_rules if rule.type == 'containsText']
     assert {rule.text for rule in status_rules} == {
         'OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE', 'INPUT ERROR', 'SYSTEM ERROR',
     }
