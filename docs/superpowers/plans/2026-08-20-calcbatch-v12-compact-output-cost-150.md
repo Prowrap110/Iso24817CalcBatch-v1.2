@@ -4,7 +4,7 @@
 
 **Goal:** Publish a compact CalcBatch v1.2 workbook with exactly nine main outputs, quantity-based total amounts, and 150-row main/detail limits.
 
-**Architecture:** Preserve the rich engine result internally while narrowing only the controlled main worksheet boundary. Summary and warning aggregation consume in-memory calculations instead of removed worksheet diagnostics. Historical workbook contracts are recognized explicitly and always rebuilt into the new narrow trusted template.
+**Architecture:** Preserve the rich engine result internally while narrowing only the controlled main worksheet boundary. Summary and warning aggregation consume in-memory calculations instead of removed worksheet diagnostics. The active release contract is the current 150/150 template and its processed-workbook re-upload path; any retained legacy reader is outside that support contract.
 
 **Tech Stack:** Python 3.11, Streamlit, openpyxl, pytest, Git, GitHub, Streamlit Community Cloud.
 
@@ -19,7 +19,7 @@
 - Quantity is an editable non-negative Cost input; Total Amount is `Quantity * Price`.
 - No engineering equation or status-classification rule changes.
 - Use tests first and observe each new test fail before production edits.
-- Preserve controlled legacy uploads within the new row limits.
+- Require users to download and use the current 150/150 template; older templates are not supported or guaranteed.
 
 ---
 
@@ -32,12 +32,11 @@
 - Modify: `tests/test_batch_schema.py`
 - Modify: `tests/test_workbook_template.py`
 - Modify: `tests/test_workbook_processor.py`
-- Modify: `tests/test_legacy_v12_upgrade.py`
 - Modify: `tests/helpers.py`
 
 **Interfaces:**
 - Consumes: rich `RowCalculation.outputs` from `batch_adapter.calculate_row`.
-- Produces: exact nine-member `OUTPUT_HEADERS`; explicit historical wide-eight-sheet contract; `_write_warnings_sheet(workbook, calculations)` and `_write_summary(..., calculations)` behavior independent of removed main columns.
+- Produces: exact nine-member `OUTPUT_HEADERS`; `_write_warnings_sheet(workbook, calculations)` and `_write_summary(..., calculations)` behavior independent of removed main columns.
 
 - [ ] **Step 1: Add exact failing schema and workbook tests**
 
@@ -54,16 +53,15 @@ assert data.tables['BatchRows'].ref == 'A1:AC151'
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
-Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py tests/test_legacy_v12_upgrade.py`
+Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py`
 
-Expected: failures show the current wide output tuple/table and missing historical-wide contract.
+Expected: failures show the current wide output tuple/table.
 
 - [ ] **Step 3: Implement the narrow schema and compatibility contract**
 
-Freeze the pre-narrow wide v1.2 tuple under a historical name, set current
-`OUTPUT_HEADERS` to the exact nine literals, select upload contracts by sheet
-order plus exact headings, and preserve `is_legacy=False` for the historical
-wide eight-sheet contract.
+Set current `OUTPUT_HEADERS` to the exact nine literals while preserving the
+current-template processing contract. Any retained legacy reader remains
+best-effort only and is outside the release guidance.
 
 - [ ] **Step 4: Add failing warning/Summary parity tests**
 
@@ -86,7 +84,7 @@ styling.
 
 - [ ] **Step 7: Run focused tests GREEN and commit**
 
-Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py tests/test_workbook_processor.py tests/test_legacy_v12_upgrade.py tests/test_warning_catalog.py`
+Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py tests/test_workbook_processor.py tests/test_warning_catalog.py`
 
 Commit only Task 1 files with message: `feat: compact CalcBatch v1.2 result columns`.
 
@@ -184,7 +182,7 @@ controlled Total Amount formula. Keep all product names and v1.2 filenames.
 
 - [ ] **Step 4: Run focused boundary/UI/acceptance tests GREEN**
 
-Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py tests/test_workbook_processor.py tests/test_app_smoke.py tests/test_full_batch_acceptance.py tests/test_legacy_v12_upgrade.py`.
+Run: `python3 -m pytest -q tests/test_batch_schema.py tests/test_workbook_template.py tests/test_workbook_processor.py tests/test_app_smoke.py tests/test_full_batch_acceptance.py`.
 
 - [ ] **Step 5: Commit**
 

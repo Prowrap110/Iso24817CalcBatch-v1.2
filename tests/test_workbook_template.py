@@ -252,14 +252,15 @@ def test_template_mechanism_choices_and_guidance_distinguish_dent_routes():
     assert 'full-pressure laminate' in instruction_text
     assert 'dent no-crack' in instruction_text
     assert 'component-pipe substrate load sharing' in instruction_text
-    assert 'legacy dent' in instruction_text
-    assert 'older batch workbook' in instruction_text
-    assert 'becomes dent w/crack' in instruction_text
+    assert 'download and use the current prowrap calcbatch v1.2 150/150 template' in instruction_text
+    assert 'older 500/2,000-row templates are not supported or guaranteed' in instruction_text
+    assert 'legacy dent' not in instruction_text
+    assert 'older batch workbook' not in instruction_text
     assert 'not a complete dent integrity or fatigue acceptance assessment' in instruction_text
 
 
 def test_long_dent_instruction_has_room_for_every_wrapped_line():
-    """Catches the final legacy-migration sentence being clipped in row 15."""
+    """Catches the current-template requirement being clipped in the Instructions sheet."""
     instructions = _template_workbook()['Instructions']
 
     assert instructions['A15'].alignment.wrap_text is True
@@ -391,7 +392,8 @@ def test_template_contains_no_formulas_and_has_user_guidance():
     assert 'defect length remains the complete outer-to-outer continuous repair-zone span.' in instruction_text
     assert 'one main row per continuous repair' in instruction_text
     assert 'one independent defect per row' not in instruction_text
-    assert 'five-sheet, six-sheet, and seven-sheet' in instruction_text
+    assert 'older 500/2,000-row templates are not supported or guaranteed' in instruction_text
+    assert 'five-sheet, six-sheet, and seven-sheet' not in instruction_text
     assert 'preliminary screening' in ' '.join(
         str(cell.value).lower()
         for row in summary.iter_rows()

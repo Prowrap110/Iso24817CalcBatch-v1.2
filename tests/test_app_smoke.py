@@ -32,8 +32,8 @@ def test_app_starts_with_template_and_upload_actions():
     assert any('Upload workbook' in heading.value for heading in app.subheader)
 
 
-def test_app_lists_canonical_dents_and_explains_legacy_migration():
-    """Catch ambiguous new choices or migration of old Dent to a credited route."""
+def test_app_lists_canonical_dents_and_requires_the_current_template():
+    """Catches a current release that sends users to an unsupported older template."""
     app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()
     captions = [caption.value for caption in app.caption]
 
@@ -47,10 +47,11 @@ def test_app_lists_canonical_dents_and_explains_legacy_migration():
         for caption in captions
     )
     assert any(
-        'Old controlled batch workbooks containing generic Dent are interpreted '
-        'conservatively as Dent w/crack.' in caption
+        'Download and use the current PROWRAP CalcBatch v1.2 150/150 template.'
+        in caption
         for caption in captions
     )
+    assert not any('older batch workbook' in caption.lower() for caption in captions)
 
 
 def test_app_states_compact_row_and_commercial_contract():

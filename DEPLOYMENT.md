@@ -24,6 +24,6 @@ the PROWRAP v1.1 calculator or any older CalcBatch application.
 9. Confirm the processed workbook records Batch Engine Version `1.2.0` and Pinned Source Revision `91b68d6`.
 10. Confirm the Cost Calculation table has `A5:X...` coverage for the populated compact rows. `B3`, `E3`, `H3`, and `W6:W155` Quantity are highlighted and editable; Quantity accepts only a blank or non-negative number. `U`, `V`, and `X` hold only the controlled Cost, Price, and Total Amount formulas, with Total Amount equal to `Price x Quantity`.
 11. Re-upload a processed workbook with non-negative B3/E3/H3 values and valid Quantity values. Confirm assumptions and Quantity persist while the trusted eight-sheet output, linked details, warnings, and exact controlled formulas are rebuilt.
-12. Confirm controlled five-, six-, seven-sheet, and historical wide eight-sheet workbooks within the new 150-row limits upgrade into the compact eight-sheet v1.2 output; eligible legacy external-corrosion rows use Actual defect length.
+12. Confirm the release guidance requires users to download and use the current 150/150 template. Older 500/2,000-row templates are not supported or guaranteed.
 
 The application must continue to process one workbook at a time in session/temporary memory only. Do not configure persistent customer-workbook storage.

@@ -31,7 +31,7 @@ The template accepts at most 150 populated main rows and 150 populated Individua
 
 The mechanism list distinguishes two dent calculation routes. **Dent w/crack** uses the conservative full-pressure laminate basis and claims no substrate pressure credit. For an eligible external defect with at least 1 mm remaining wall, **Dent no-crack** uses component-pipe substrate load sharing based on pipe yield strength, design factor, remaining wall, and outside diameter. Internal dents and external dents below 1 mm remaining wall stay on the Type B full-replacement route with no substrate credit. `Dent no-crack` selects the composite-repair calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Dent depth, local strain, ovalization, fatigue, gouge, and weld interaction remain outside this calculator and require competent engineering review.
 
-Previously downloaded controlled batch workbooks containing the legacy generic `Dent` value remain accepted. During processing, that value is migrated conservatively to `Dent w/crack` and written with the canonical name in the regenerated result and Cost Calculation sheets. A legacy row never gains the `Dent no-crack` substrate credit automatically.
+Download and use the current `PROWRAP_CalcBatch_v1.2_Template.xlsx` with its 150 main-row and 150 Individual Defects-row limits. Older 500/2,000-row templates are not supported or guaranteed for this release; start again from the current template before calculation.
 
 Quantity and Total Amount complete the Cost Calculation tail after Cost and Price. Quantity is blank by default, visibly highlighted, editable, and restricted to non-negative numbers; Total Amount is locked and formula-controlled as `Price x Quantity`. Valid Quantity values are retained on a safe re-upload while all controlled engineering values and formulas are rebuilt.
 
@@ -41,7 +41,7 @@ Processed defect rows show only permanent references such as `W003, W006` in the
 
 Prowrap CF cloth widths of **300 mm and 500 mm** are approved configurations in this batch release; both continue to use the fixed 50 mm stitch overlap. The approved material basis is **Tg = 110 degC**, giving a general qualified design-temperature limit of **90 degC** and a long-life Class 3 Type B limit of **80 degC**.
 
-Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted under their existing structural validation rules. Processing upgrades older layouts to the current eight-sheet output: **Batch Information**, **Batch Input & Results**, **Individual Defects**, **Cost Calculation**, **Warnings**, **Summary**, **Instructions**, and hidden **Lists**. Eligible legacy external-corrosion rows default conservatively to **Actual defect length**.
+Use only the current eight-sheet template and its processed-workbook contract for re-upload. The download contains **Batch Information**, **Batch Input & Results**, **Individual Defects**, **Cost Calculation**, **Warnings**, **Summary**, **Instructions**, and hidden **Lists**.
 
 ## Statuses
 
@@ -64,4 +64,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
 python3 scripts/create_acceptance_workbook.py /tmp/PROWRAP_Batch_Acceptance.xlsx
 ```
 
-The six-row acceptance workbook exercises Actual, Independent, and linked Manual external corrosion; an invalid Manual group; `Dent no-crack`; and `Dent w/crack`. It reconciles the three corrosion safe pressures, plies, continuous repair span, governing manual detail, permanent warning references, the twenty-field commercial mapping, editable Quantity, controlled Cost/Price/Total Amount formulas, re-upload behavior, and legacy upgrades. Batch release version is `1.2.0`; its verified external-corrosion engine source is `91b68d64508a4786934f0e17f2aea0dbebf745a7`.
+The six-row acceptance workbook exercises Actual, Independent, and linked Manual external corrosion; an invalid Manual group; `Dent no-crack`; and `Dent w/crack`. It reconciles the three corrosion safe pressures, plies, continuous repair span, governing manual detail, permanent warning references, the twenty-field commercial mapping, editable Quantity, controlled Cost/Price/Total Amount formulas, and current-template re-upload behavior. Batch release version is `1.2.0`; its verified external-corrosion engine source is `91b68d64508a4786934f0e17f2aea0dbebf745a7`.

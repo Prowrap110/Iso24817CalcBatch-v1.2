@@ -85,12 +85,10 @@ and `X6:X155` for populated compact rows.
   active. The parsed worksheet-cell ceiling is recalibrated to the smaller
   controlled workbook with conservative headroom.
 
-Controlled five-, six-, and seven-sheet legacy workbooks remain accepted. The
-existing wide eight-sheet CalcBatch v1.2 workbook also remains accepted as a
-historical source contract. Each accepted source is rebuilt into the new narrow
-eight-sheet contract. Any accepted historical workbook with populated main or
-detail input beyond the new 150-row boundary is rejected rather than silently
-truncated.
+The supported release contract is the current 150/150 template and a processed
+workbook produced from that template. Older 500/2,000-row, five-, six-,
+seven-sheet, and historical-wide templates are not supported or guaranteed;
+users must download the current v1.2 template before calculation.
 
 ## User interface and documentation
 
@@ -110,8 +108,7 @@ The release must demonstrate:
 - valid Quantity preservation through processed-workbook re-upload;
 - 150-row success and first-excess-row rejection for both input sheets;
 - Summary and Warnings parity after removing main diagnostic columns;
-- upgrade of a historical wide eight-sheet v1.2 workbook without changing
-  linked-corrosion inputs;
+- current-template re-upload without changing linked-corrosion inputs;
 - a full automated regression pass and visual inspection of every final sheet;
 - a scoped commit and push to the existing public
   `feature/linked-corrosion-v12` branch; and

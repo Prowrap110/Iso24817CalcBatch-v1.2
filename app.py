@@ -128,8 +128,8 @@ def main() -> None:
         'Supported mechanisms: Corrosion, Dent w/crack, Dent no-crack, Leak, and Crack.'
     )
     st.caption(
-        'Old controlled batch workbooks containing generic Dent are interpreted '
-        'conservatively as Dent w/crack.'
+        'Download and use the current PROWRAP CalcBatch v1.2 150/150 template. '
+        'Older 500/2,000-row templates are not supported or guaranteed.'
     )
     st.caption(
         'For Enter manually, use a stable Repair Group ID on the main repair row '

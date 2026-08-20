@@ -75,8 +75,7 @@ _HEADER_NOTES = {
     'Operating Temperature [degC]': 'Required. Enter the operating temperature in degrees C.',
     'Mechanism': (
         'Required. Dent w/crack uses a full-pressure laminate. An eligible external '
-        'Dent no-crack uses component-pipe substrate load sharing. Legacy Dent is '
-        'accepted only when upgrading an older batch workbook and becomes Dent w/crack.'
+        'Dent no-crack uses component-pipe substrate load sharing.'
     ),
     'Defect Location': 'Required. Choose External or Internal.',
     'Defect Length [mm]': 'Required. Enter the defect length in millimetres; value must be positive.',
@@ -402,8 +401,8 @@ def _build_instructions(worksheet) -> None:
         ('A12', '10. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
         ('A13', '11. Price = Cost x Price Multiplier. Total Amount = Price x Quantity. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
         ('A14', '12. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost, Price, and Total Amount formulas and may be safely uploaded again.', False),
-        ('A15', '13. Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
-        ('A16', '14. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
+        ('A15', '13. Download and use the current PROWRAP CalcBatch v1.2 150/150 template. Older 500/2,000-row templates are not supported or guaranteed.', False),
+        ('A16', '14. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment.', False),
         ('A17', 'Status meanings', True),
         ('A18', 'OK — a valid result with no review warning.', False),
         ('A19', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
