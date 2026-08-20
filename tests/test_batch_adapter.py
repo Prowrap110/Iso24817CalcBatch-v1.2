@@ -1,5 +1,8 @@
+import math
+
 import pytest
 
+import batch_adapter
 from batch_adapter import calculate_row
 from engine.corrosion_defects import (
     ACTUAL_DEFECT_LENGTH,
@@ -78,6 +81,43 @@ def test_single_candidate_modes_inline_the_complete_scalar_audit(
             'warning_codes': ', '.join(candidate.warning_codes),
         },
     }
+
+
+@pytest.mark.parametrize(('value', 'expected'), (
+    (float('inf'), 'Infinity'),
+    (float('-inf'), '-Infinity'),
+    (float('nan'), 'NaN'),
+    (12.5, 12.5),
+))
+def test_audit_scalar_normalization_is_explicit_and_preserves_finite_values(
+    value, expected,
+):
+    """Catches non-standard JSON tokens or lost finite audit precision."""
+    normalizer = getattr(batch_adapter, 'normalize_audit_scalar', None)
+
+    assert normalizer is not None
+    assert normalizer(value) == expected
+
+
+def test_high_smys_actual_inline_audit_normalizes_limiting_folias_only():
+    """Catches adapter traces leaking a non-finite float into workbook JSON."""
+    outcome = calculate_row(batch_info(), validated_row(**{
+        'Pipe OD [mm]': 1016.0,
+        'Nominal Wall [mm]': 12.0,
+        'Pipe Yield [MPa]': 550.0,
+        'Defect Length [mm]': 1000.0,
+    }))
+    candidate = outcome.candidate_calculations[0]
+    inline = outcome.outputs['B31G Detail']['inline_candidate']
+
+    assert outcome.status.value == 'REVIEW REQUIRED'
+    assert candidate.method == 'original'
+    assert candidate.length_parameter_z == pytest.approx(82.02099737532808)
+    assert math.isinf(candidate.folias_factor)
+    assert inline['method'] == 'original'
+    assert inline['length_parameter_z'] == pytest.approx(82.02099737532808)
+    assert inline['folias_factor'] == 'Infinity'
+    assert isinstance(inline['safe_pressure_bar'], float)
 
 
 def test_independent_adapter_returns_the_conservative_pit_candidate():

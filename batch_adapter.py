@@ -1,6 +1,7 @@
 """Map one validated worksheet row to the isolated PROWRAP engine."""
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from batch_schema import (
@@ -73,6 +74,15 @@ _INSTALLABLE_OUTPUTS = (
     'Fabric Area [m2]',
     'Epoxy Mass [kg]',
 )
+
+
+def normalize_audit_scalar(value: object) -> object:
+    """Represent non-finite audit floats explicitly without altering finite values."""
+    if not isinstance(value, float) or math.isfinite(value):
+        return value
+    if math.isnan(value):
+        return 'NaN'
+    return 'Infinity' if value > 0 else '-Infinity'
 
 
 def calculate_row(
@@ -328,7 +338,7 @@ def _inline_candidate_audit(
     ):
         return None
     candidate = candidates[0]
-    return {
+    audit = {
         'defect_id': candidate.defect_id,
         'length_mm': candidate.length_mm,
         'remaining_wall_mm': candidate.remaining_wall_mm,
@@ -347,4 +357,8 @@ def _inline_candidate_audit(
         'credited_safe_pressure_bar': candidate.credited_safe_pressure_bar,
         'governing': candidate.governing,
         'warning_codes': ', '.join(candidate.warning_codes),
+    }
+    return {
+        key: normalize_audit_scalar(value)
+        for key, value in audit.items()
     }

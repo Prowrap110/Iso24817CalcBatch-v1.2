@@ -34,6 +34,7 @@ from tests.helpers import (
 from workbook_processor import (
     WorkbookProcessingError,
     _commercial_input_errors,
+    _output_value,
     inspect_workbook,
     process_workbook,
 )
@@ -217,6 +218,87 @@ def test_actual_and_independent_workbook_audits_are_inline_bounded_and_stable():
     assert [second_main.cell(row, b31g_column).value for row in (2, 3)] == [
         main.cell(row, b31g_column).value for row in (2, 3)
     ]
+
+
+def test_high_smys_actual_b31g_detail_is_strict_bounded_json():
+    """Catches Original-B31G limiting Folias leaking as bare JSON Infinity."""
+    source = workbook_bytes_with_rows([valid_row_values(**{
+        'Pipe OD [mm]': 1016.0,
+        'Nominal Wall [mm]': 12.0,
+        'Pipe Yield [MPa]': 550.0,
+        'Defect Length [mm]': 1000.0,
+    })])
+
+    result = process_workbook(source, FIXED_TIME, 'actual-high-smys.xlsx')
+    workbook = _workbook(result.workbook_bytes)
+    main = workbook['Batch Input & Results']
+    headings = tuple(cell.value for cell in main[1])
+    value = main.cell(2, headings.index('B31G Detail') + 1).value
+
+    def reject_nonstandard_constant(constant):
+        pytest.fail(f'B31G Detail contains non-standard JSON constant {constant}')
+
+    reference = json.loads(value, parse_constant=reject_nonstandard_constant)
+    inline = reference['inline_candidate']
+
+    assert result.status_counts == {'REVIEW REQUIRED': 1}
+    assert len(value) < 2000
+    assert inline['method'] == 'original'
+    assert inline['length_parameter_z'] == pytest.approx(82.02099737532808)
+    assert inline['folias_factor'] == 'Infinity'
+    assert isinstance(inline['safe_pressure_bar'], float)
+
+
+def test_b31g_detail_serializer_rejects_an_unnormalized_nonfinite_float():
+    """Catches a future audit field bypassing normalization into invalid JSON."""
+    with pytest.raises(ValueError, match='Out of range float values'):
+        _output_value('B31G Detail', {'folias_factor': float('inf')})
+
+
+def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
+    """Catches a limiting Manual Folias value becoming a blank detail cell."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values(**{
+            'Pipe OD [mm]': 1016.0,
+            'Nominal Wall [mm]': 12.0,
+            'Pipe Yield [MPa]': 550.0,
+            'Defect Length [mm]': 1000.0,
+            'Defect Length Basis': ENTER_MANUALLY,
+            'Repair Group ID': 'R-LONG',
+            'Remaining Wall [mm]': None,
+        })],
+        detail_rows=[detail_values(
+            group='R-LONG', defect='D-LONG', length=1000.0, wall=4.5,
+        )],
+    )
+
+    first = process_workbook(source, FIXED_TIME, 'manual-high-smys.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    first_main = first_workbook['Batch Input & Results']
+    first_detail = first_workbook['Individual Defects']
+    main_headings = tuple(cell.value for cell in first_main[1])
+    detail_headings = tuple(cell.value for cell in first_detail[1])
+    method_column = detail_headings.index('B31G Method') + 1
+    z_column = detail_headings.index('B31G Length Parameter z') + 1
+    folias_column = detail_headings.index('B31G Folias Factor M') + 1
+    b31g_column = main_headings.index('B31G Detail') + 1
+
+    assert first.status_counts == {'REVIEW REQUIRED': 1}
+    assert first_detail.cell(2, method_column).value == 'original'
+    assert first_detail.cell(2, z_column).value == pytest.approx(82.02099737532808)
+    assert first_detail.cell(2, folias_column).value == 'Infinity'
+
+    second = process_workbook(
+        first.workbook_bytes, FIXED_TIME, 'manual-high-smys-reupload.xlsx',
+    )
+    second_workbook = _workbook(second.workbook_bytes)
+    second_main = second_workbook['Batch Input & Results']
+    second_detail = second_workbook['Individual Defects']
+
+    assert second_detail.cell(2, method_column).value == 'original'
+    assert second_detail.cell(2, z_column).value == first_detail.cell(2, z_column).value
+    assert second_detail.cell(2, folias_column).value == 'Infinity'
+    assert second_main.cell(2, b31g_column).value == first_main.cell(2, b31g_column).value
 
 
 def test_legacy_actual_upgrade_preserves_inline_candidate_audit_on_reupload():

@@ -25,7 +25,12 @@ try:  # openpyxl uses lxml when it is available.
 except ImportError:  # pragma: no cover - exercised where lxml is unavailable.
     XMLSyntaxError = ParseError
 
-from batch_adapter import CandidateCalculation, RowCalculation, calculate_row
+from batch_adapter import (
+    CandidateCalculation,
+    RowCalculation,
+    calculate_row,
+    normalize_audit_scalar,
+)
 from batch_corrosion import ManualGroupLinks, link_manual_groups
 from batch_mechanisms import normalize_upload_mechanism
 from batch_schema import (
@@ -912,7 +917,7 @@ def _write_detail_result_row(
     for column, heading in enumerate(
         DETAIL_OUTPUT_HEADERS, start=len(DETAIL_INPUT_HEADERS) + 1,
     ):
-        value = outputs.get(heading)
+        value = normalize_audit_scalar(outputs.get(heading))
         if heading == 'Assessment Warning Codes' and isinstance(value, (tuple, list)):
             value = ', '.join(str(item) for item in value)
         worksheet.cell(excel_row, column).value = value
@@ -1077,7 +1082,15 @@ def _result_rows(worksheet) -> list[dict[str, object]]:
 def _output_value(heading: str, value: object) -> object:
     if value is None:
         return None
-    if heading in {'B31G Detail', 'Type A Detail', 'Type B Detail'}:
+    if heading == 'B31G Detail':
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(',', ':'),
+            default=str,
+            allow_nan=False,
+        )
+    if heading in {'Type A Detail', 'Type B Detail'}:
         return json.dumps(value, sort_keys=True, separators=(',', ':'), default=str)
     if heading == 'Compliance Warnings' and isinstance(value, (tuple, list)):
         return ', '.join(str(item) for item in value)
