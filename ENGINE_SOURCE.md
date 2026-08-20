@@ -1,6 +1,7 @@
 # Pinned calculation-engine source
 
-**Batch release version:** `1.2.0`
+**CalcBatch release version:** `1.2.0`
+**Verified linked-corrosion source revision:** `91b68d64508a4786934f0e17f2aea0dbebf745a7` (`91b68d6` recorded in processed workbooks)
 
 The calculation engine in this repository was copied from
 [`Prowrap110/Iso24817Calcv1.1`](https://github.com/Prowrap110/Iso24817Calcv1.1)
@@ -20,7 +21,7 @@ The copied modules are:
 
 ## Verified v1.2 corrosion-engine port
 
-The external-corrosion assessment route was ported from verified source revision
+The external-corrosion assessment route was ported from the verified source revision
 `91b68d64508a4786934f0e17f2aea0dbebf745a7` in the separate
 `Iso24817Calcv1.2` checkout. The source files were `corrosion_defects.py` and
 `prowrap_calculations.py`.

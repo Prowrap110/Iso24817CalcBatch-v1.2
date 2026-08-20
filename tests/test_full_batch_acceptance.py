@@ -1,234 +1,176 @@
+"""End-to-end release acceptance for the separate linked-corrosion batch app."""
+
 from datetime import UTC, datetime
 from io import BytesIO
-import json
 
 from openpyxl import load_workbook
 import pytest
 
-import batch_adapter
-from batch_schema import INPUT_HEADERS, OUTPUT_HEADERS
+from batch_schema import (
+    DETAIL_INPUT_HEADERS,
+    DETAIL_OUTPUT_HEADERS,
+    INPUT_HEADERS,
+    OUTPUT_HEADERS,
+)
 from cost_calculation import COST_SOURCE_HEADERS
+from tests.helpers import legacy_workbook_bytes_with_rows, valid_row_values
 from workbook_processor import process_workbook
 
 
-FIXED_TIME = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
-COMMON_INFO = {
-    'customer': 'Acceptance Customer',
-    'location': 'Acceptance Location',
-    'report_no': 'ACCEPT-001',
-}
+FIXED_TIME = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+EXPECTED_SHEETS = [
+    'Batch Information', 'Batch Input & Results', 'Individual Defects',
+    'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
+]
 
 
-def test_acceptance_workbook_exercises_all_statuses_and_uses_common_batch_info(
-    tmp_path, monkeypatch,
-):
-    """Catch a release workbook that breaks status, cost, or re-upload contracts."""
+def _columns(headers):
+    return {header: index for index, header in enumerate(headers, start=1)}
+
+
+def _formula_cells(workbook):
+    return [
+        (f'{worksheet.title}!{cell.coordinate}', cell.value)
+        for worksheet in workbook.worksheets
+        for row in worksheet.iter_rows()
+        for cell in row
+        if cell.data_type == 'f'
+    ]
+
+
+def test_linked_corrosion_release_acceptance_workbook(tmp_path):
+    """Exercise all v1.2 modes through the production template and processor."""
     from scripts.create_acceptance_workbook import create_acceptance_workbook
 
     source_path = tmp_path / 'acceptance-input.xlsx'
     create_acceptance_workbook(source_path)
-    source = source_path.read_bytes()
-    input_book = load_workbook(BytesIO(source), data_only=False)
-    input_sheet = input_book['Batch Input & Results']
+    input_book = load_workbook(source_path, data_only=False)
+    main_input = input_book['Batch Input & Results']
+    detail_input = input_book['Individual Defects']
+    main_columns = _columns(INPUT_HEADERS + OUTPUT_HEADERS)
+    detail_columns = _columns(DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS)
 
-    assert tuple(cell.value for cell in input_sheet[1]) == INPUT_HEADERS + OUTPUT_HEADERS
-    assert {'Customer', 'Project Location', 'Report No'}.isdisjoint(INPUT_HEADERS)
-    assert [input_sheet.cell(row, 1).value for row in range(2, 8)] == [
-        457.2, 457.2, 457.2, 457.2, 457.2, 457.2,
+    assert input_book.sheetnames == EXPECTED_SHEETS
+    assert input_book['Batch Information']['A1'].value == 'PROWRAP Batch Repair Calculator'
+    assert input_book['Batch Information']['A1'].value != 'PROWRAP v1.1 Calculator'
+    assert [input_book['Batch Information'].cell(row, 2).value for row in (3, 4, 5)] == [
+        'Acceptance Customer', 'Acceptance Location', 'ACCEPT-001',
     ]
-    mechanism_column = INPUT_HEADERS.index('Mechanism') + 1
-    remaining_wall_column = INPUT_HEADERS.index('Remaining Wall [mm]') + 1
-    assert [input_sheet.cell(row, mechanism_column).value for row in (2, 7)] == [
-        'Dent w/crack', 'Dent no-crack',
+    expected_rows = (
+        ('Actual defect length', None, 'Corrosion', 'External'),
+        ('Independent defects', None, 'Corrosion', 'External'),
+        ('Enter manually', 'R-001', 'Corrosion', 'External'),
+        ('Enter manually', 'R-BAD', 'Corrosion', 'External'),
+        (None, None, 'Dent no-crack', 'External'),
+        (None, None, 'Dent w/crack', 'External'),
+    )
+    assert [
+        tuple(main_input.cell(row, main_columns[header]).value for header in (
+            'Defect Length Basis', 'Repair Group ID', 'Mechanism', 'Defect Location',
+        )) for row in range(2, 8)
+    ] == list(expected_rows)
+    for row in range(2, 5):
+        assert [main_input.cell(row, main_columns[header]).value for header in (
+            'Pipe OD [mm]', 'Nominal Wall [mm]', 'Design Pressure [bar]',
+            'Defect Length [mm]', 'Prowrap CF Cloth Width [mm]',
+        )] == [1016.0, 12.0, 104.9, 1000.0, 500.0]
+    assert main_input.cell(4, main_columns['Remaining Wall [mm]']).value is None
+    assert [
+        tuple(detail_input.cell(row, detail_columns[header]).value for header in DETAIL_INPUT_HEADERS)
+        for row in range(2, 5)
+    ] == [
+        ('R-001', 'D-01', 10.0, 9.652, 'Yes'),
+        ('R-001', 'D-02', 35.0, 10.0, 'Yes'),
+        ('R-BAD', 'D-BAD', 10.0, 9.652, 'No'),
     ]
-    assert [input_sheet.cell(row, remaining_wall_column).value for row in (2, 7)] == [
-        9.53, 9.53,
-    ]
-    assert input_sheet.cell(7, INPUT_HEADERS.index('Prowrap CF Cloth Width [mm]') + 1).value == 500.0
 
-    calls = []
-    original_calculate_repair = batch_adapter.calculate_repair
-
-    def capture_common_info(**kwargs):
-        calls.append({key: kwargs[key] for key in COMMON_INFO})
-        return original_calculate_repair(**kwargs)
-
-    monkeypatch.setattr(batch_adapter, 'calculate_repair', capture_common_info)
-    processed = process_workbook(source, processed_at=FIXED_TIME)
+    processed = process_workbook(source_path.read_bytes(), processed_at=FIXED_TIME)
     result_book = load_workbook(BytesIO(processed.workbook_bytes), data_only=False)
-    result_sheet = result_book['Batch Input & Results']
-    output_column = {
-        header: index
-        for index, header in enumerate(INPUT_HEADERS + OUTPUT_HEADERS, start=1)
-    }
-    statuses = [
-        result_sheet.cell(row, output_column['Calculation Status']).value
-        for row in range(2, 8)
-    ]
+    main = result_book['Batch Input & Results']
+    detail = result_book['Individual Defects']
 
-    assert statuses == [
-        'OK', 'REVIEW REQUIRED', 'NOT REPAIRABLE',
-        'INPUT ERROR', 'REVIEW REQUIRED', 'OK',
-    ]
-    assert [result_sheet.cell(row, mechanism_column).value for row in (2, 7)] == [
-        'Dent w/crack', 'Dent no-crack',
-    ]
-    expected_no_crack_capacity_bar = (
-        2.0 * (359.0 * 0.72) * 9.53 / 457.2 * 10.0
-    )
-    assert result_sheet.cell(2, output_column['Effective Pipe Capacity [bar]']).value == 0.0
-    assert result_sheet.cell(2, output_column['Composite Pressure Deficit [bar]']).value == 50.0
-    assert result_sheet.cell(2, output_column['Installed Plies']).value == 9
-    assert result_sheet.cell(
-        7, output_column['Effective Pipe Capacity [bar]'],
-    ).value == pytest.approx(expected_no_crack_capacity_bar)
-    assert result_sheet.cell(7, output_column['Composite Pressure Deficit [bar]']).value == 0.0
-    assert result_sheet.cell(7, output_column['Installed Plies']).value == 3
-
-    cracked_detail = json.loads(result_sheet.cell(2, output_column['Type A Detail']).value)
-    no_crack_detail = json.loads(result_sheet.cell(7, output_column['Type A Detail']).value)
-    assert cracked_detail['calculation_basis'] == (
-        'Dent w/crack - full-pressure laminate'
-    )
-    assert cracked_detail['substrate_allowable_pressure_mpa'] == 0.0
-    assert cracked_detail['composite_pressure_deficit_mpa'] == 5.0
-    assert no_crack_detail['calculation_basis'] == (
-        'Dent no-crack - substrate load sharing'
-    )
-    assert no_crack_detail['allowable_pipe_stress_mpa'] == pytest.approx(258.48)
-    assert no_crack_detail['substrate_allowable_pressure_mpa'] == pytest.approx(
-        expected_no_crack_capacity_bar / 10.0,
-    )
-    assert no_crack_detail['composite_pressure_deficit_mpa'] == 0.0
-    # Preview and processing use the same engine path so the user sees the
-    # final row status before generating the download.
-    assert calls == [COMMON_INFO] * 10
-    assert result_book['Batch Information']['B3'].value == 'Acceptance Customer'
-    assert result_book['Batch Information']['B4'].value == 'Acceptance Location'
-    assert result_book['Batch Information']['B5'].value == 'ACCEPT-001'
-    assert result_book.sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Individual Defects',
-        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
-    ]
+    assert result_book.sheetnames == EXPECTED_SHEETS
+    assert result_book['Lists'].sheet_state == 'hidden'
+    assert main.protection.sheet is True
+    assert detail.protection.sheet is True
+    assert main.tables['BatchRows'].ref == main.tables['BatchRows'].autoFilter.ref
+    assert detail.tables['IndividualDefects'].ref == detail.tables['IndividualDefects'].autoFilter.ref
     assert result_book['Summary']['B24'].value == '1.2.0'
     assert result_book['Summary']['B25'].value == '91b68d6'
-
-    cost_sheet = result_book['Cost Calculation']
-    source_columns = {
-        header: column
-        for column, header in enumerate(INPUT_HEADERS + OUTPUT_HEADERS, start=1)
-    }
-    assert tuple(cost_sheet.cell(5, column).value for column in range(1, 21)) == tuple(
-        COST_SOURCE_HEADERS
-    )
-    assert (cost_sheet['U5'].value, cost_sheet['V5'].value) == ('Cost', 'Price')
-    for cost_row, result_row in zip(range(6, 12), range(2, 8), strict=True):
-        assert [cost_sheet.cell(cost_row, column).value for column in range(1, 21)] == [
-            result_sheet.cell(result_row, source_columns[header]).value
-            for header in COST_SOURCE_HEADERS
-        ]
-    assert [cost_sheet.cell(row, 6).value for row in (6, 11)] == [
-        'Dent w/crack', 'Dent no-crack',
+    assert [main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
+        'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
     ]
-
-    assert [cost_sheet[address].value for address in ('B3', 'E3', 'H3')] == [
-        None, None, None,
+    assert [main.cell(row, main_columns['Effective Pipe Capacity [bar]']).value / 10.0 for row in (2, 3, 4)] == pytest.approx([
+        7.571542406120033, 8.82257484144555, 8.783461911867068,
+    ])
+    assert [main.cell(row, main_columns['Installed Plies']).value for row in (2, 3, 4)] == [12, 7, 7]
+    assert [main.cell(row, main_columns['Repair Zone Length [mm]']).value for row in (2, 3, 4)] == [1000.0, 1000.0, 1000.0]
+    assert main.cell(4, main_columns['Governing Defect ID']).value == 'D-02'
+    assert main.cell(4, main_columns['Governing B31G Length [mm]']).value == 35.0
+    assert main.cell(4, main_columns['Governing B31G Remaining Wall [mm]']).value == 10.0
+    assert [main.cell(row, main_columns['B31G Candidate Count']).value for row in (2, 3, 4)] == [1, 1, 2]
+    assert [detail.cell(row, detail_columns['Calculation Status']).value for row in (2, 3, 4)] == [
+        'OK', 'OK', 'INPUT ERROR',
     ]
-    assert all(not cost_sheet[address].protection.locked for address in ('B3', 'E3', 'H3'))
-    assert cost_sheet.protection.sheet is True
-    assert all(cost_sheet[address].protection.locked for address in ('A3', 'D3', 'G3'))
-    assert all(
-        cost_sheet.cell(row, column).protection.locked
-        for row in range(5, 12)
-        for column in range(1, 23)
-    )
-    assert cost_sheet.freeze_panes == 'A6'
-    assert cost_sheet.tables['CostRows'].ref == 'A5:V11'
+    assert [detail.cell(row, detail_columns['Governing Defect']).value for row in (2, 3)] == [None, 'Yes']
+    assert [detail.cell(row, detail_columns['Credited Safe Pressure [bar]']).value for row in (2, 3)] == pytest.approx([
+        88.2257484144555, 87.83461911867067,
+    ])
+    assert 'INVALID_SELECTION' in detail.cell(4, detail_columns['Error Code']).value
 
-    expected_formulas = [
-        ('Cost Calculation!U6', '=IF(OR($B$3="",$E$3="",S6="",T6=""),"",S6*$B$3+T6*$E$3)'),
-        ('Cost Calculation!V6', '=IF(OR(U6="",$H$3=""),"",U6*$H$3)'),
-        ('Cost Calculation!U7', '=IF(OR($B$3="",$E$3="",S7="",T7=""),"",S7*$B$3+T7*$E$3)'),
-        ('Cost Calculation!V7', '=IF(OR(U7="",$H$3=""),"",U7*$H$3)'),
-        ('Cost Calculation!U8', '=IF(OR($B$3="",$E$3="",S8="",T8=""),"",S8*$B$3+T8*$E$3)'),
-        ('Cost Calculation!V8', '=IF(OR(U8="",$H$3=""),"",U8*$H$3)'),
-        ('Cost Calculation!U9', '=IF(OR($B$3="",$E$3="",S9="",T9=""),"",S9*$B$3+T9*$E$3)'),
-        ('Cost Calculation!V9', '=IF(OR(U9="",$H$3=""),"",U9*$H$3)'),
-        ('Cost Calculation!U10', '=IF(OR($B$3="",$E$3="",S10="",T10=""),"",S10*$B$3+T10*$E$3)'),
-        ('Cost Calculation!V10', '=IF(OR(U10="",$H$3=""),"",U10*$H$3)'),
-        ('Cost Calculation!U11', '=IF(OR($B$3="",$E$3="",S11="",T11=""),"",S11*$B$3+T11*$E$3)'),
-        ('Cost Calculation!V11', '=IF(OR(U11="",$H$3=""),"",U11*$H$3)'),
-    ]
-
-    warning_values = [
-        result_sheet.cell(row, output_column['Compliance Warnings']).value
-        for row in range(2, 8)
-    ]
-    assert warning_values[1] == 'W018'
-    assert warning_values[5] is None
-    assert all(
-        value is None or all(code.startswith('W') and len(code) == 4
-                             for code in value.split(', '))
-        for value in warning_values
-    )
-    warning_sheet = result_book['Warnings']
     warning_rows = {
-        warning_sheet.cell(row, 1).value: warning_sheet.cell(row, 3).value
-        for row in range(4, warning_sheet.max_row + 1)
+        result_book['Warnings'].cell(row, 1).value: result_book['Warnings'].cell(row, 3).value
+        for row in range(4, result_book['Warnings'].max_row + 1)
+        if result_book['Warnings'].cell(row, 1).value
     }
-    assert warning_rows['W003'] == '4, 6'
-    assert warning_rows['W018'] == '3'
+    assert warning_rows['W013'] == 'Main 2, 3, 4; Individual Defects 2, 3'
 
-    formulas = [
-        (f'{worksheet.title}!{cell.coordinate}', cell.value)
-        for worksheet in result_book.worksheets
-        for row in worksheet.iter_rows()
-        for cell in row
-        if cell.data_type == 'f'
+    cost = result_book['Cost Calculation']
+    assert tuple(cost.cell(5, column).value for column in range(1, 21)) == COST_SOURCE_HEADERS
+    assert (cost['U5'].value, cost['V5'].value) == ('Cost', 'Price')
+    assert (cost.tables['CostRows'].ref, cost.tables['CostRows'].autoFilter.ref) == ('A5:V11', 'A5:V11')
+    assert cost.protection.sheet is True
+    assert all(not cost[address].protection.locked for address in ('B3', 'E3', 'H3'))
+    assert all(cost[address].protection.locked for address in ('A3', 'D3', 'G3'))
+    expected_formulas = [
+        (f'Cost Calculation!{column}{row}', formula)
+        for row in range(6, 12)
+        for column, formula in (
+            ('U', f'=IF(OR($B$3="",$E$3="",S{row}="",T{row}=""),"",S{row}*$B$3+T{row}*$E$3)'),
+            ('V', f'=IF(OR(U{row}="",$H$3=""),"",U{row}*$H$3)'),
+        )
     ]
-    assert formulas == expected_formulas
+    assert _formula_cells(result_book) == expected_formulas
+    source_columns = _columns(INPUT_HEADERS + OUTPUT_HEADERS)
+    for cost_row, main_row in zip(range(6, 12), range(2, 8), strict=True):
+        assert [cost.cell(cost_row, column).value for column in range(1, 21)] == [
+            main.cell(main_row, source_columns[header]).value for header in COST_SOURCE_HEADERS
+        ]
 
-    # Both no-solution and invalid rows remain aligned in the cost table, but
-    # unavailable material quantities are never converted into commercial data.
-    assert [cost_sheet.cell(row, column).value for row in (8, 9) for column in (19, 20)] == [
-        None, None, None, None,
-    ]
-    assert cost_sheet['S11'].value is not None
-    assert cost_sheet['T11'].value is not None
-    assert (cost_sheet['U11'].value, cost_sheet['V11'].value) == (
-        expected_formulas[-2][1], expected_formulas[-1][1],
-    )
-    cached_book = load_workbook(BytesIO(processed.workbook_bytes), data_only=True)
-    cached_cost = cached_book['Cost Calculation']
-    assert [cached_cost.cell(row, column).value for row in range(6, 12) for column in (21, 22)] == [
-        None,
-    ] * 12
-
-    # A processed workbook is a supported upload: the user-controlled
-    # assumptions survive while the commercial table and exact formulas rebuild.
-    cost_sheet['B3'] = 25.0
-    cost_sheet['E3'] = 8.0
-    cost_sheet['H3'] = 1.4
+    cost['B3'], cost['E3'], cost['H3'] = 25.0, 8.0, 1.4
     reupload = BytesIO()
     result_book.save(reupload)
-    rebuilt = process_workbook(reupload.getvalue(), processed_at=FIXED_TIME)
-    rebuilt_book = load_workbook(BytesIO(rebuilt.workbook_bytes), data_only=False)
-    rebuilt_cost = rebuilt_book['Cost Calculation']
-    assert [rebuilt_cost[address].value for address in ('B3', 'E3', 'H3')] == [
-        25.0, 8.0, 1.4,
+    rebuilt_book = load_workbook(
+        BytesIO(process_workbook(reupload.getvalue(), processed_at=FIXED_TIME).workbook_bytes),
+        data_only=False,
+    )
+    assert rebuilt_book.sheetnames == EXPECTED_SHEETS
+    assert [rebuilt_book['Cost Calculation'][address].value for address in ('B3', 'E3', 'H3')] == [25.0, 8.0, 1.4]
+    assert _formula_cells(rebuilt_book) == expected_formulas
+    rebuilt_main = rebuilt_book['Batch Input & Results']
+    assert [rebuilt_main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
+        'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
     ]
-    rebuilt_result = rebuilt_book['Batch Input & Results']
-    assert [rebuilt_result.cell(row, mechanism_column).value for row in (2, 7)] == [
-        'Dent w/crack', 'Dent no-crack',
-    ]
-    assert [rebuilt_cost.cell(row, 6).value for row in (6, 11)] == [
-        'Dent w/crack', 'Dent no-crack',
-    ]
-    rebuilt_formulas = [
-        (f'{worksheet.title}!{cell.coordinate}', cell.value)
-        for worksheet in rebuilt_book.worksheets
-        for row in worksheet.iter_rows()
-        for cell in row
-        if cell.data_type == 'f'
-    ]
-    assert rebuilt_formulas == expected_formulas
+
+
+@pytest.mark.parametrize('sheet_count', (5, 6, 7))
+def test_legacy_controlled_layouts_upgrade_to_the_v12_eight_sheet_contract(sheet_count):
+    """Old controlled five/six/seven-sheet downloads remain safe input files."""
+    legacy = legacy_workbook_bytes_with_rows([valid_row_values()], sheet_count=sheet_count)
+    upgraded = process_workbook(legacy, processed_at=FIXED_TIME)
+    workbook = load_workbook(BytesIO(upgraded.workbook_bytes), data_only=False)
+    main_columns = _columns(INPUT_HEADERS + OUTPUT_HEADERS)
+
+    assert workbook.sheetnames == EXPECTED_SHEETS
+    assert workbook['Batch Input & Results'].cell(2, main_columns['Defect Length Basis']).value == 'Actual defect length'
+    assert workbook['Batch Input & Results'].cell(2, main_columns['Calculation Status']).value == 'OK'

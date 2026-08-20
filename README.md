@@ -17,11 +17,16 @@ streamlit run app.py
 
 1. Download the controlled `PROWRAP_Batch_Template.xlsx` from the app.
 2. On **Batch Information**, enter Customer, Project Location, and Report No once.
-3. On **Batch Input & Results**, enter one defect per row, starting with `Pipe OD [mm]`. Do not add, remove, rename, or reorder columns.
-4. Upload the `.xlsx`, review the first 20 rows, calculate, and download the new results workbook.
-5. In the processed workbook, enter or change the three highlighted commercial assumptions on **Cost Calculation**: `B3` for CF Cost / m2, `E3` for Epoxy Cost / kg, and `H3` for Price Multiplier.
+3. On **Batch Input & Results**, enter one continuous repair zone per row, starting with `Pipe OD [mm]`. Do not add, remove, rename, or reorder columns.
+4. For external corrosion, select one **Defect Length Basis**:
+   - **Actual defect length** assesses the entered length and remaining wall as one continuous/interacting B31G defect.
+   - **Independent defects** assumes 10 mm x 10 mm defects, each separated by more than `3t`, using the entered remaining wall. The entered Defect Length is still the full continuous repair-zone span.
+   - **Enter manually** leaves the main Remaining Wall blank and gives the row a unique Repair Group ID. Enter its individually paired lengths and remaining walls on **Individual Defects**; each row must confirm separation exceeds `3t`. The least creditable individual assessment governs, but the main Defect Length remains the full repair-zone span.
+5. Here `t` means the **nominal pipe wall thickness**, not defect depth or remaining wall. Manual group ownership is exact: one Repair Group ID belongs to one manual main row, and orphan, duplicate, or incomplete detail records are reported locally.
+6. Upload the `.xlsx`, review the first 20 rows, calculate, and download the new results workbook.
+7. In the processed workbook, enter or change the three highlighted commercial assumptions on **Cost Calculation**: `B3` for CF Cost / m2, `E3` for Epoxy Cost / kg, and `H3` for Price Multiplier.
 
-The template accepts at most 500 populated rows. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns. The downloaded input template contains no formulas, macros, or VBA. A processed workbook contains only the controlled Cost and Price formulas described below.
+The template accepts at most 500 populated main rows and 2,000 populated Individual Defects rows, and uploads cannot exceed 10 MB. Blank rows are ignored; partially completed rows are retained and marked individually. The input cells and their row order are preserved. Results are appended only in the output columns. The downloaded input template contains no formulas, macros, or VBA. A processed workbook contains only the controlled Cost and Price formulas described below.
 
 The mechanism list distinguishes two dent calculation routes. **Dent w/crack** uses the conservative full-pressure laminate basis and claims no substrate pressure credit. For an eligible external defect with at least 1 mm remaining wall, **Dent no-crack** uses component-pipe substrate load sharing based on pipe yield strength, design factor, remaining wall, and outside diameter. Internal dents and external dents below 1 mm remaining wall stay on the Type B full-replacement route with no substrate credit. `Dent no-crack` selects the composite-repair calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Dent depth, local strain, ovalization, fatigue, gouge, and weld interaction remain outside this calculator and require competent engineering review.
 
@@ -33,14 +38,14 @@ Processed defect rows show only permanent references such as `W003, W006` in the
 
 Prowrap CF cloth widths of **300 mm and 500 mm** are approved configurations in this batch release; both continue to use the fixed 50 mm stitch overlap. The approved material basis is **Tg = 110 degC**, giving a general qualified design-temperature limit of **90 degC** and a long-life Class 3 Type B limit of **80 degC**.
 
-Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted under their existing structural validation rules. Processing upgrades older layouts to the current seven-sheet output containing **Cost Calculation** and the **Warnings** register.
+Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted under their existing structural validation rules. Processing upgrades older layouts to the current eight-sheet output: **Batch Information**, **Batch Input & Results**, **Individual Defects**, **Cost Calculation**, **Warnings**, **Summary**, **Instructions**, and hidden **Lists**. Eligible legacy external-corrosion rows default conservatively to **Actual defect length**.
 
 ## Statuses
 
-- `OK` — a valid result with no review warning.
+- `OK` — a valid screening result with no review warning.
 - `REVIEW REQUIRED` — a result exists, but engineering or product approval is needed.
 - `NOT REPAIRABLE` — the Type B Formula 12 route has no repair solution; do not treat any diagnostic result as an installable design.
-- `INPUT ERROR` — correct the row-level error and recalculate.
+- `INPUT ERROR` — correct the main or linked Individual Defects row and recalculate.
 - `SYSTEM ERROR` — retain the workbook and contact PROTAP.
 
 These are preliminary screening outputs. Competent engineering review is required before repair design, approval, procurement, or installation.
@@ -56,4 +61,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q
 python3 scripts/create_acceptance_workbook.py /tmp/PROWRAP_Batch_Acceptance.xlsx
 ```
 
-The six-row acceptance workbook exercises `Dent w/crack` with zero substrate credit and `Dent no-crack` with component-pipe load sharing, plus `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, a zero-pressure Type B `REVIEW REQUIRED` row, repeated permanent warning references, a warning-free 500 mm cloth row, the twenty-field commercial mapping, and controlled Cost and Price formulas.
+The six-row acceptance workbook exercises Actual, Independent, and linked Manual external corrosion; an invalid Manual group; `Dent no-crack`; and `Dent w/crack`. It reconciles the three corrosion safe pressures, plies, continuous repair span, governing manual detail, permanent warning references, the twenty-field commercial mapping, controlled Cost and Price formulas, re-upload behavior, and legacy upgrades. Batch release version is `1.2.0`; its verified external-corrosion engine source is `91b68d64508a4786934f0e17f2aea0dbebf745a7`.
