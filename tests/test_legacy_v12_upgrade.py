@@ -4,6 +4,7 @@ from io import BytesIO
 import pytest
 from openpyxl import load_workbook
 
+import batch_schema
 from batch_schema import (
     INPUT_HEADERS,
     LEGACY_INPUT_HEADERS,
@@ -11,7 +12,11 @@ from batch_schema import (
     OUTPUT_HEADERS,
 )
 from engine.corrosion_defects import ACTUAL_DEFECT_LENGTH
-from tests.helpers import legacy_workbook_bytes_with_rows, valid_row_values
+from tests.helpers import (
+    historical_v12_workbook_bytes_with_rows,
+    legacy_workbook_bytes_with_rows,
+    valid_row_values,
+)
 from workbook_processor import inspect_workbook, process_workbook
 
 
@@ -32,6 +37,10 @@ def _saved(workbook) -> bytes:
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def _workbook_from_bytes(data: bytes):
+    return load_workbook(BytesIO(data), data_only=False)
 
 
 def _legacy_source(sheet_count: int) -> bytes:
@@ -88,3 +97,24 @@ def test_legacy_upgrade_sets_actual_basis_only_for_eligible_external_corrosion()
     assert rebuilt_main.cell(
         2, rebuilt_headings.index('Defect Length Basis') + 1,
     ).value is None
+
+
+def test_historical_wide_v12_workbook_upgrades_without_legacy_normalization():
+    """Catches an old eight-sheet v1.2 upload being misclassified as pre-v1.2."""
+    source = historical_v12_workbook_bytes_with_rows([
+        valid_row_values(**{'Defect Length Basis': 'Independent defects'}),
+    ])
+
+    inspection = inspect_workbook(source)
+    processed = process_workbook(source, FIXED_TIME, 'historical-v12.xlsx')
+    workbook = _workbook_from_bytes(processed.workbook_bytes)
+    main = workbook['Batch Input & Results']
+
+    assert inspection.workbook_errors == ()
+    assert tuple(cell.value for cell in main[1]) == INPUT_HEADERS + OUTPUT_HEADERS
+    assert tuple(cell.value for cell in _workbook_from_bytes(source)[
+        'Batch Input & Results'
+    ][1]) == INPUT_HEADERS + batch_schema.HISTORICAL_V12_OUTPUT_HEADERS
+    assert main.cell(2, INPUT_HEADERS.index('Defect Length Basis') + 1).value == (
+        'Independent defects'
+    )

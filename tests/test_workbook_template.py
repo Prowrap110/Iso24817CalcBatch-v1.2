@@ -131,17 +131,18 @@ def test_warning_register_subtitle_spans_the_table_without_clipping():
     assert warnings.row_dimensions[2].height >= 32
 
 
-def test_diagnostic_detail_columns_do_not_expand_result_rows():
-    """Catches wrapped diagnostic JSON making each result row extremely tall."""
+def test_compact_output_columns_do_not_include_diagnostic_json():
+    """Catches removed audit diagnostics returning to the public main table."""
     data = _template_workbook()['Batch Input & Results']
 
-    for heading in ('B31G Detail', 'Type A Detail', 'Type B Detail'):
-        column = list(INPUT_HEADERS + OUTPUT_HEADERS).index(heading) + 1
-        assert data.cell(2, column).alignment.wrap_text is not True
-        assert data.cell(2, column).alignment.shrink_to_fit is True
+    assert tuple(cell.value for cell in data[1]) == INPUT_HEADERS + OUTPUT_HEADERS
+    assert not {
+        'Calculation Status', 'Error Code', 'Error Message', 'Compliance Warnings',
+        'B31G Detail', 'Type A Detail', 'Type B Detail',
+    }.intersection(OUTPUT_HEADERS)
 
 
-def test_template_uses_canonical_headings_and_a_filterable_500_row_table():
+def test_template_uses_canonical_headings_and_a_filterable_compact_table():
     """Catches a workbook whose headers or accepted row extent diverge from parsing."""
     workbook = _template_workbook()
     data = workbook['Batch Input & Results']
@@ -150,7 +151,7 @@ def test_template_uses_canonical_headings_and_a_filterable_500_row_table():
     assert headings == list(INPUT_HEADERS + OUTPUT_HEADERS)
     assert len(data.tables) == 1
     table = next(iter(data.tables.values()))
-    assert table.ref == f'A1:{data.cell(1, len(headings)).coordinate[:-1]}{MAX_ROWS + 1}'
+    assert table.ref == f'A1:AC{MAX_ROWS + 1}'
     assert table.autoFilter.ref == table.ref
 
 

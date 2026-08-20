@@ -6,7 +6,6 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
-import json
 import logging
 import math
 from pathlib import Path, PurePosixPath
@@ -37,6 +36,7 @@ from batch_schema import (
     DETAIL_INPUT_HEADERS,
     DETAIL_OUTPUT_HEADERS,
     INPUT_HEADERS,
+    HISTORICAL_V12_OUTPUT_HEADERS,
     LEGACY_INPUT_HEADERS,
     LEGACY_OUTPUT_HEADERS,
     MAX_DETAIL_ROWS,
@@ -186,7 +186,13 @@ _LEGACY_CONTRACTS = tuple(
 _CURRENT_CONTRACT = WorkbookContract(
     _CURRENT_SHEETS, INPUT_HEADERS, OUTPUT_HEADERS, True, False,
 )
-_ACCEPTED_CONTRACTS = _LEGACY_CONTRACTS + (_CURRENT_CONTRACT,)
+_HISTORICAL_V12_CONTRACT = WorkbookContract(
+    _CURRENT_SHEETS, INPUT_HEADERS, HISTORICAL_V12_OUTPUT_HEADERS, True, False,
+)
+_ACCEPTED_CONTRACTS = _LEGACY_CONTRACTS + (
+    _HISTORICAL_V12_CONTRACT,
+    _CURRENT_CONTRACT,
+)
 
 
 @dataclass(frozen=True)
@@ -376,10 +382,6 @@ def process_workbook(
             data_sheet,
             excel_row,
             calculation,
-            processed_timestamp,
-            detail_excel_rows=tuple(
-                detail_row.source_excel_row for detail_row in linked_detail_rows
-            ),
         )
         status_counts[calculation.status.value] += 1
 
@@ -416,13 +418,13 @@ def process_workbook(
         )
 
     _write_cost_sheet(output_workbook)
-    _write_warnings_sheet(output_workbook)
+    _write_warnings_sheet(output_workbook, calculations)
     _write_summary(
         output_workbook,
         inspection.batch_info,
         processed_timestamp,
         inspection.populated_rows,
-        status_counts,
+        calculations,
         _sanitized_source_name(source_name),
     )
     output_workbook.calculation.calcMode = 'auto'
@@ -474,22 +476,30 @@ def _validate_structure(
         return None, (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
 
     sheet_order = tuple(workbook.sheetnames)
+    headings = tuple(cell.value for cell in workbook['Batch Input & Results'][1])
+    order_contracts = tuple(
+        item for item in _ACCEPTED_CONTRACTS if item.sheet_order == sheet_order
+    )
     contract = next(
-        (item for item in _ACCEPTED_CONTRACTS if item.sheet_order == sheet_order),
+        (
+            item for item in order_contracts
+            if headings == item.input_headers + item.output_headers
+        ),
         None,
     )
-    headings = tuple(cell.value for cell in workbook['Batch Input & Results'][1])
-    if (
-        contract is not None
-        and contract.is_legacy
-        and headings == INPUT_HEADERS + OUTPUT_HEADERS
-    ):
+    if sheet_order in {item.sheet_order for item in _LEGACY_CONTRACTS} and headings in {
+        INPUT_HEADERS + OUTPUT_HEADERS,
+        INPUT_HEADERS + HISTORICAL_V12_OUTPUT_HEADERS,
+    }:
         return None, (_issue(
             'MISSING_WORKSHEET',
             'Missing required worksheet: Individual Defects.',
         ),)
     if contract is None:
-        if headings == INPUT_HEADERS + OUTPUT_HEADERS:
+        if headings in {
+            INPUT_HEADERS + OUTPUT_HEADERS,
+            INPUT_HEADERS + HISTORICAL_V12_OUTPUT_HEADERS,
+        }:
             missing_current = [
                 sheet for sheet in _CURRENT_SHEETS if sheet not in workbook.sheetnames
             ]
@@ -498,6 +508,17 @@ def _validate_structure(
                     'MISSING_WORKSHEET',
                     f'Missing required worksheet: {missing_current[0]}.',
                 ),)
+        if order_contracts:
+            duplicate = _first_duplicate(headings)
+            if duplicate:
+                return None, (_issue(
+                    'DUPLICATE_INPUT_HEADER',
+                    f'Duplicate workbook heading: {duplicate}.',
+                ),)
+            return None, (_issue(
+                'INVALID_INPUT_HEADERS',
+                'Batch Input & Results headings do not match the controlled template.',
+            ),)
         return None, (_issue(
             'INVALID_WORKSHEET_ORDER',
             'Worksheets do not match a controlled legacy or current template order.',
@@ -511,15 +532,9 @@ def _validate_structure(
             'Batch Information must contain Customer, Project Location, and Report No labels.',
         ),)
 
-    expected = contract.input_headers + contract.output_headers
     duplicate = _first_duplicate(headings)
     if duplicate:
         return None, (_issue('DUPLICATE_INPUT_HEADER', f'Duplicate workbook heading: {duplicate}.'),)
-    if headings != expected:
-        return None, (_issue(
-            'INVALID_INPUT_HEADERS',
-            'Batch Input & Results headings do not match the controlled template.',
-        ),)
     if contract.has_individual_defects:
         detail_headings = tuple(cell.value for cell in workbook['Individual Defects'][1])
         duplicate = _first_duplicate(detail_headings)
@@ -853,30 +868,9 @@ def _write_result_row(
     worksheet,
     excel_row: int,
     calculation: RowCalculation,
-    timestamp: str,
-    *,
-    detail_excel_rows: tuple[int, ...] = (),
 ) -> None:
-    outputs = {
-        'Source Excel Row': calculation.source_excel_row,
-        'Calculation Status': calculation.status.value,
-        'Error Code': calculation.error_code,
-        'Error Message': calculation.error_message,
-        'Batch Engine Version': BATCH_ENGINE_VERSION,
-        'Source Engine Revision': SOURCE_ENGINE_REVISION,
-        'Processed At [UTC]': timestamp,
-        **calculation.outputs,
-    }
-    b31g_reference = outputs.get('B31G Detail')
-    if isinstance(b31g_reference, dict):
-        b31g_reference = dict(b31g_reference)
-        if detail_excel_rows:
-            b31g_reference['detail_excel_row_range'] = (
-                f'{detail_excel_rows[0]}:{detail_excel_rows[-1]}'
-            )
-        outputs['B31G Detail'] = b31g_reference
     for column, heading in enumerate(OUTPUT_HEADERS, start=len(INPUT_HEADERS) + 1):
-        worksheet.cell(excel_row, column).value = _output_value(heading, outputs.get(heading))
+        worksheet.cell(excel_row, column).value = calculation.outputs.get(heading)
 
 
 def _write_detail_result_row(
@@ -959,7 +953,10 @@ def _write_cost_sheet(workbook) -> None:
     table.autoFilter.ref = table.ref
 
 
-def _write_warnings_sheet(workbook) -> None:
+def _write_warnings_sheet(
+    workbook,
+    calculations: dict[int, RowCalculation],
+) -> None:
     """Build one consolidated, permanent warning register for the batch."""
     warnings_sheet = workbook['Warnings']
     data_sheet = workbook['Batch Input & Results']
@@ -989,14 +986,22 @@ def _write_warnings_sheet(workbook) -> None:
                 if source_row not in rows:
                     rows.append(source_row)
 
-    collect(
-        data_sheet,
-        len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Compliance Warnings') + 1,
-        len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Source Excel Row') + 1,
-        'main',
-        INPUT_HEADERS,
-        MAX_ROWS,
-    )
+    for calculation in calculations.values():
+        warning_codes = calculation.outputs.get('Compliance Warnings', ())
+        if isinstance(warning_codes, str):
+            warning_codes = tuple(
+                item.strip() for item in warning_codes.split(',') if item.strip()
+            )
+        if not isinstance(warning_codes, (tuple, list)):
+            continue
+        for code in warning_codes:
+            if not isinstance(code, str) or not code.strip():
+                continue
+            code = code.strip()
+            warning_meaning(code)
+            rows = affected_rows.setdefault(code, {'main': [], 'detail': []})['main']
+            if calculation.source_excel_row not in rows:
+                rows.append(calculation.source_excel_row)
     collect(
         detail_sheet,
         len(DETAIL_INPUT_HEADERS) + DETAIL_OUTPUT_HEADERS.index('Assessment Warning Codes') + 1,
@@ -1040,7 +1045,7 @@ def _write_summary(
     batch_info: BatchInfo,
     timestamp: str,
     populated_rows: int,
-    status_counts: Counter[str],
+    calculations: dict[int, RowCalculation],
     source_name: str,
 ) -> None:
     summary = workbook['Summary']
@@ -1050,51 +1055,31 @@ def _write_summary(
     summary['B7'] = source_name
     summary['B8'] = timestamp
     summary['B10'] = populated_rows
+    status_counts = Counter(
+        calculation.status.value for calculation in calculations.values()
+    )
     for row, status in enumerate(CalculationStatus, start=13):
         summary.cell(row, 2).value = status_counts.get(status.value, 0)
 
-    rows = _result_rows(workbook['Batch Input & Results'])
-    methods = [row['Thickness Calculation Method'] for row in rows]
+    methods = [
+        calculation.outputs.get('Thickness Calculation Method')
+        for calculation in calculations.values()
+    ]
     summary['B19'] = sum(_is_type_a(method) for method in methods)
     summary['B20'] = sum(_is_type_b(method) for method in methods)
-    summary['B21'] = sum(bool(row['Compliance Warnings']) for row in rows)
+    summary['B21'] = sum(
+        bool(calculation.outputs.get('Compliance Warnings'))
+        for calculation in calculations.values()
+    )
     summary['B22'] = sum(
-        row['Calculation Status'] in {
+        calculation.status.value in {
             CalculationStatus.REVIEW_REQUIRED.value,
             CalculationStatus.NOT_REPAIRABLE.value,
         }
-        for row in rows
+        for calculation in calculations.values()
     )
     summary['B24'] = BATCH_ENGINE_VERSION
     summary['B25'] = SOURCE_ENGINE_REVISION
-
-
-def _result_rows(worksheet) -> list[dict[str, object]]:
-    results: list[dict[str, object]] = []
-    for excel_row, _ in _populated_rows(worksheet):
-        results.append({
-            header: worksheet.cell(excel_row, column).value
-            for column, header in enumerate(OUTPUT_HEADERS, start=len(INPUT_HEADERS) + 1)
-        })
-    return results
-
-
-def _output_value(heading: str, value: object) -> object:
-    if value is None:
-        return None
-    if heading == 'B31G Detail':
-        return json.dumps(
-            value,
-            sort_keys=True,
-            separators=(',', ':'),
-            default=str,
-            allow_nan=False,
-        )
-    if heading in {'Type A Detail', 'Type B Detail'}:
-        return json.dumps(value, sort_keys=True, separators=(',', ':'), default=str)
-    if heading == 'Compliance Warnings' and isinstance(value, (tuple, list)):
-        return ', '.join(str(item) for item in value)
-    return value
 
 
 def _utc_timestamp(value: datetime) -> str:

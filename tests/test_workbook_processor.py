@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 from io import BytesIO
-import json
 import zipfile
 
 import pytest
@@ -34,7 +33,6 @@ from tests.helpers import (
 from workbook_processor import (
     WorkbookProcessingError,
     _commercial_input_errors,
-    _output_value,
     inspect_workbook,
     process_workbook,
 )
@@ -140,7 +138,7 @@ def _result_signature(data: bytes):
 
 
 def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row():
-    """Catches pair reordering or loss of candidate results at the workbook boundary."""
+    """Catches pair reordering or loss of candidate results at the detail boundary."""
     source = workbook_bytes_with_rows(
         [_manual_row()],
         detail_rows=[
@@ -151,13 +149,10 @@ def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row
 
     processed = process_workbook(source, FIXED_TIME, 'manual.xlsx')
     workbook = _workbook(processed.workbook_bytes)
-    main = workbook['Batch Input & Results']
     detail = workbook['Individual Defects']
-    main_headings = tuple(cell.value for cell in main[1])
     detail_headings = tuple(cell.value for cell in detail[1])
 
     assert processed.status_counts == {'REVIEW REQUIRED': 1}
-    assert main.cell(2, main_headings.index('Governing Defect ID') + 1).value == 'D-02'
     assert [detail.cell(row, detail_headings.index('Calculation Status') + 1).value for row in (2, 3)] == [
         'OK', 'OK',
     ]
@@ -170,89 +165,6 @@ def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row
     assert [detail.cell(row, detail_headings.index('Credited Safe Pressure [bar]') + 1).value for row in (2, 3)] == pytest.approx([
         88.2257484144555, 87.83461911867067,
     ])
-
-
-def test_actual_and_independent_workbook_audits_are_inline_bounded_and_stable():
-    """Catches single-candidate traces being replaced by reference metadata only."""
-    source = workbook_bytes_with_rows([
-        valid_row_values(**{'Defect Length Basis': 'Actual defect length'}),
-        valid_row_values(**{'Defect Length Basis': 'Independent defects'}),
-    ])
-
-    first = process_workbook(source, FIXED_TIME, 'single-candidates.xlsx')
-    first_workbook = _workbook(first.workbook_bytes)
-    main = first_workbook['Batch Input & Results']
-    headings = tuple(cell.value for cell in main[1])
-    b31g_column = headings.index('B31G Detail') + 1
-    references = [json.loads(main.cell(row, b31g_column).value) for row in (2, 3)]
-
-    assert [reference['governing_defect_id'] for reference in references] == [
-        'Actual/combined defect', 'Independent 10x10 mm defects',
-    ]
-    assert [reference['inline_candidate']['length_mm'] for reference in references] == [
-        100.0, 10.0,
-    ]
-    assert [reference['inline_candidate']['remaining_wall_mm'] for reference in references] == [
-        4.5, 4.5,
-    ]
-    inline_keys = {
-        'defect_id', 'length_mm', 'remaining_wall_mm', 'method', 'd_over_t',
-        'length_parameter_z', 'folias_factor', 'flow_stress_mpa',
-        'failure_stress_mpa', 'failure_pressure_bar', 'safe_pressure_bar',
-        'safety_factor', 'operating_hoop_stress_mpa', 'applicable',
-        'acceptable', 'credited_safe_pressure_bar', 'governing', 'warning_codes',
-    }
-    assert all(set(reference['inline_candidate']) == inline_keys for reference in references)
-    for row, reference in zip((2, 3), references, strict=True):
-        value = main.cell(row, b31g_column).value
-        assert len(value) < 2000
-        assert value == json.dumps(reference, sort_keys=True, separators=(',', ':'))
-        assert reference['inline_candidate']['credited_safe_pressure_bar'] == pytest.approx(
-            main.cell(row, headings.index('Effective Pipe Capacity [bar]') + 1).value
-        )
-
-    second = process_workbook(
-        first.workbook_bytes, FIXED_TIME, 'single-candidates-processed.xlsx',
-    )
-    second_main = _workbook(second.workbook_bytes)['Batch Input & Results']
-    assert [second_main.cell(row, b31g_column).value for row in (2, 3)] == [
-        main.cell(row, b31g_column).value for row in (2, 3)
-    ]
-
-
-def test_high_smys_actual_b31g_detail_is_strict_bounded_json():
-    """Catches Original-B31G limiting Folias leaking as bare JSON Infinity."""
-    source = workbook_bytes_with_rows([valid_row_values(**{
-        'Pipe OD [mm]': 1016.0,
-        'Nominal Wall [mm]': 12.0,
-        'Pipe Yield [MPa]': 550.0,
-        'Defect Length [mm]': 1000.0,
-    })])
-
-    result = process_workbook(source, FIXED_TIME, 'actual-high-smys.xlsx')
-    workbook = _workbook(result.workbook_bytes)
-    main = workbook['Batch Input & Results']
-    headings = tuple(cell.value for cell in main[1])
-    value = main.cell(2, headings.index('B31G Detail') + 1).value
-
-    def reject_nonstandard_constant(constant):
-        pytest.fail(f'B31G Detail contains non-standard JSON constant {constant}')
-
-    reference = json.loads(value, parse_constant=reject_nonstandard_constant)
-    inline = reference['inline_candidate']
-
-    assert result.status_counts == {'REVIEW REQUIRED': 1}
-    assert len(value) < 2000
-    assert inline['method'] == 'original'
-    assert inline['length_parameter_z'] == pytest.approx(82.02099737532808)
-    assert inline['folias_factor'] == 'Infinity'
-    assert isinstance(inline['safe_pressure_bar'], float)
-
-
-def test_b31g_detail_serializer_rejects_an_unnormalized_nonfinite_float():
-    """Catches a future audit field bypassing normalization into invalid JSON."""
-    with pytest.raises(ValueError, match='Out of range float values'):
-        _output_value('B31G Detail', {'folias_factor': float('inf')})
 
 
 def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
@@ -274,14 +186,11 @@ def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
 
     first = process_workbook(source, FIXED_TIME, 'manual-high-smys.xlsx')
     first_workbook = _workbook(first.workbook_bytes)
-    first_main = first_workbook['Batch Input & Results']
     first_detail = first_workbook['Individual Defects']
-    main_headings = tuple(cell.value for cell in first_main[1])
     detail_headings = tuple(cell.value for cell in first_detail[1])
     method_column = detail_headings.index('B31G Method') + 1
     z_column = detail_headings.index('B31G Length Parameter z') + 1
     folias_column = detail_headings.index('B31G Folias Factor M') + 1
-    b31g_column = main_headings.index('B31G Detail') + 1
 
     assert first.status_counts == {'REVIEW REQUIRED': 1}
     assert first_detail.cell(2, method_column).value == 'original'
@@ -292,35 +201,11 @@ def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
         first.workbook_bytes, FIXED_TIME, 'manual-high-smys-reupload.xlsx',
     )
     second_workbook = _workbook(second.workbook_bytes)
-    second_main = second_workbook['Batch Input & Results']
     second_detail = second_workbook['Individual Defects']
 
     assert second_detail.cell(2, method_column).value == 'original'
     assert second_detail.cell(2, z_column).value == first_detail.cell(2, z_column).value
     assert second_detail.cell(2, folias_column).value == 'Infinity'
-    assert second_main.cell(2, b31g_column).value == first_main.cell(2, b31g_column).value
-
-
-def test_legacy_actual_upgrade_preserves_inline_candidate_audit_on_reupload():
-    legacy = legacy_workbook_bytes_with_rows([valid_row_values()])
-
-    first = process_workbook(legacy, FIXED_TIME, 'legacy.xlsx')
-    first_workbook = _workbook(first.workbook_bytes)
-    main = first_workbook['Batch Input & Results']
-    headings = tuple(cell.value for cell in main[1])
-    b31g_column = headings.index('B31G Detail') + 1
-    reference = json.loads(main.cell(2, b31g_column).value)
-
-    assert reference['detail_schema_version'] == '2'
-    assert reference['detail_excel_row_range'] is None
-    assert reference['inline_candidate']['defect_id'] == 'Actual/combined defect'
-    assert reference['inline_candidate']['length_mm'] == 100.0
-    assert reference['inline_candidate']['remaining_wall_mm'] == 4.5
-
-    second = process_workbook(first.workbook_bytes, FIXED_TIME, 'legacy-reupload.xlsx')
-    assert _workbook(second.workbook_bytes)['Batch Input & Results'].cell(
-        2, b31g_column,
-    ).value == main.cell(2, b31g_column).value
 
 
 def test_warning_register_scans_detail_rows_501_502_and_2001():
@@ -346,8 +231,8 @@ def test_warning_register_scans_detail_rows_501_502_and_2001():
     )
 
 
-def test_501_detail_candidates_use_bounded_valid_json_and_scalar_audit_rows():
-    """Catches Excel truncating a large opaque candidate collection to invalid JSON."""
+def test_501_detail_candidates_keep_scalar_audit_rows():
+    """Catches linked candidate audits being dropped from the detail worksheet."""
     source = workbook_bytes_with_rows(
         [_manual_row()],
         detail_rows=[
@@ -360,28 +245,8 @@ def test_501_detail_candidates_use_bounded_valid_json_and_scalar_audit_rows():
 
     result = process_workbook(source, FIXED_TIME, '501-details.xlsx')
     workbook = _workbook(result.workbook_bytes)
-    main = workbook['Batch Input & Results']
     detail = workbook['Individual Defects']
-    main_headings = tuple(cell.value for cell in main[1])
     detail_headings = tuple(cell.value for cell in detail[1])
-    b31g_detail = main.cell(2, main_headings.index('B31G Detail') + 1).value
-
-    try:
-        reference = json.loads(b31g_detail)
-    except json.JSONDecodeError as error:
-        pytest.fail(
-            f'B31G Detail must be bounded valid JSON; got {len(b31g_detail)} '
-            f'characters and decode error {error}'
-        )
-    assert len(b31g_detail) < 1000
-    assert reference == {
-        'candidate_count': 501,
-        'detail_excel_row_range': '2:502',
-        'detail_schema': 'Individual Defects',
-        'detail_schema_version': '2',
-        'governing_defect_id': 'D-0001',
-        'inline_candidate': None,
-    }
     last_audit = {
         heading: detail.cell(502, detail_headings.index(heading) + 1).value
         for heading in DETAIL_OUTPUT_HEADERS
@@ -413,24 +278,8 @@ def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
 
     first = process_workbook(source, FIXED_TIME, '2000-details.xlsx')
     first_workbook = _workbook(first.workbook_bytes)
-    main = first_workbook['Batch Input & Results']
     detail = first_workbook['Individual Defects']
-    main_headings = tuple(cell.value for cell in main[1])
     detail_headings = tuple(cell.value for cell in detail[1])
-    b31g_column = main_headings.index('B31G Detail') + 1
-    first_reference_text = main.cell(2, b31g_column).value
-    first_reference = json.loads(first_reference_text)
-
-    assert len(first_reference_text) < 1000
-    assert first_reference == {
-        'candidate_count': 2000,
-        'detail_excel_row_range': '2:2001',
-        'detail_schema': 'Individual Defects',
-        'detail_schema_version': '2',
-        'governing_defect_id': 'D-0001',
-        'inline_candidate': None,
-    }
-    assert 'candidates' not in first_reference
     audit_headings = (
         'Source Excel Row',
         'Calculation Status',
@@ -460,10 +309,8 @@ def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
         first.workbook_bytes, FIXED_TIME, '2000-details-processed.xlsx',
     )
     second_workbook = _workbook(second.workbook_bytes)
-    second_main = second_workbook['Batch Input & Results']
     second_detail = second_workbook['Individual Defects']
 
-    assert second_main.cell(2, b31g_column).value == first_reference_text
     assert tuple(
         second_detail.cell(2001, detail_headings.index(heading) + 1).value
         for heading in audit_headings
@@ -481,16 +328,10 @@ def test_partial_detail_with_trimmed_group_invalidates_only_its_manual_owner():
 
     processed = process_workbook(source, FIXED_TIME, 'partial-detail.xlsx')
     workbook = _workbook(processed.workbook_bytes)
-    main = workbook['Batch Input & Results']
     detail = workbook['Individual Defects']
-    main_headings = tuple(cell.value for cell in main[1])
     detail_headings = tuple(cell.value for cell in detail[1])
 
     assert processed.status_counts == {'INPUT ERROR': 1, 'OK': 1}
-    assert main.cell(2, main_headings.index('Error Code') + 1).value.find(
-        'INVALID_INDIVIDUAL_DEFECTS'
-    ) >= 0
-    assert main.cell(3, main_headings.index('Calculation Status') + 1).value == 'OK'
     assert detail.cell(2, detail_headings.index('Calculation Status') + 1).value == (
         'INPUT ERROR'
     )
@@ -1250,15 +1091,9 @@ def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
         _workbook(source)['Batch Input & Results'].cell(3, column).value
         for column in range(1, len(INPUT_HEADERS) + 1)
     ]
-    headings = tuple(cell.value for cell in data[1])
-    status_column = headings.index('Calculation Status') + 1
-    error_code_column = headings.index('Error Code') + 1
-    error_message_column = headings.index('Error Message') + 1
-    assert data.cell(2, status_column).value == 'OK'
-    assert data.cell(3, status_column).value == 'INPUT ERROR'
-    assert data.cell(3, error_code_column).value == 'OUT_OF_RANGE'
-    assert 'Remaining Wall [mm]' in data.cell(3, error_message_column).value
-    assert data.cell(4, status_column).value == 'OK'
+    summary = processed['Summary']
+    assert summary['B13'].value == 2
+    assert summary['B16'].value == 1
 
 
 def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
@@ -1270,19 +1105,61 @@ def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
 
     result = process_workbook(source, processed_at=FIXED_TIME)
     workbook = _workbook(result.workbook_bytes)
-    data = workbook['Batch Input & Results']
     warnings = workbook['Warnings']
 
-    headings = tuple(cell.value for cell in data[1])
-    warning_column = headings.index('Compliance Warnings') + 1
-    assert data.cell(2, warning_column).value == 'W018'
-    assert data.cell(3, warning_column).value == 'W018'
     assert warnings['A4'].value == 'W018'
     assert '300 mm or 500 mm' in warnings['B4'].value
     assert warnings['C4'].value == '2, 3'
     assert warnings['A4'].font.italic is False
     assert list(warnings.tables) == ['WarningRegister']
     assert warnings.tables['WarningRegister'].ref == 'A3:C4'
+
+
+def test_compact_main_sheet_keeps_warning_and_summary_aggregation_in_memory(
+    monkeypatch,
+):
+    """Catches Summary and Warnings reading diagnostics removed from main outputs."""
+    import workbook_processor
+
+    def review_calculation(_batch_info, row):
+        return RowCalculation(
+            source_excel_row=row.source_excel_row,
+            status=CalculationStatus.REVIEW_REQUIRED,
+            outputs={
+                'Wall Loss [%]': 50.0,
+                'Required Structural Thickness [mm]': 3.0,
+                'Installed Plies': 3,
+                'Total Repair Length [mm]': 600.0,
+                'Cloth Band Count': 2,
+                'Procurement Axial Length [mm]': 650.0,
+                'Fabric Area [m2]': 0.3,
+                'Epoxy Mass [kg]': 0.2,
+                'Repair Zone Length [mm]': 100.0,
+                'Thickness Calculation Method': 'Type A (Load Sharing)',
+                'Compliance Warnings': ('W018',),
+            },
+        )
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', review_calculation)
+
+    processed = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(processed.workbook_bytes)
+    data = workbook['Batch Input & Results']
+    warnings = workbook['Warnings']
+    summary = workbook['Summary']
+
+    assert tuple(cell.value for cell in data[1]) == INPUT_HEADERS + OUTPUT_HEADERS
+    assert 'Calculation Status' not in OUTPUT_HEADERS
+    assert 'Compliance Warnings' not in OUTPUT_HEADERS
+    assert warnings['A4'].value == 'W018'
+    assert warnings['C4'].value == '2'
+    assert summary['B14'].value == 1
+    assert summary['B19'].value == 1
+    assert summary['B21'].value == 1
+    assert summary['B22'].value == 1
 
 
 def test_processed_workbook_keeps_clear_no_warning_register_state():
@@ -1450,7 +1327,7 @@ def test_processed_workbook_requests_full_automatic_recalculation():
     assert workbook.calculation.forceFullCalc is True
 
 
-def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
+def test_processed_workbook_updates_summary_without_main_diagnostic_json():
     source = workbook_bytes_with_rows([valid_row_values(**{
         'Mechanism': 'Leak',
         'Design Pressure [bar]': 150.0,
@@ -1458,17 +1335,9 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
 
     result = process_workbook(source, processed_at=FIXED_TIME)
     workbook = _workbook(result.workbook_bytes)
-    data = workbook['Batch Input & Results']
     summary = workbook['Summary']
 
     assert result.status_counts == {'NOT REPAIRABLE': 1}
-    headings = tuple(cell.value for cell in data[1])
-    assert data.cell(2, headings.index('Calculation Status') + 1).value == (
-        'NOT REPAIRABLE'
-    )
-    detail_json = data.cell(2, headings.index('Type B Detail') + 1).value
-    assert detail_json.startswith('{')
-    assert detail_json == _stable_json(detail_json)
     assert summary['B3'].value == 'Batch Customer'
     assert summary['B4'].value == 'Batch Location'
     assert summary['B5'].value == 'B-001'
@@ -1841,9 +1710,3 @@ def _column_name(column: int) -> str:
         column, remainder = divmod(column - 1, 26)
         name = chr(65 + remainder) + name
     return name
-
-
-def _stable_json(value: str) -> str:
-    import json
-
-    return json.dumps(json.loads(value), sort_keys=True, separators=(',', ':'))

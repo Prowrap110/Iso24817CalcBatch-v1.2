@@ -189,25 +189,18 @@ def _build_data_sheet(worksheet) -> None:
             cell = worksheet.cell(row, column)
             cell.border = Border(bottom=_THIN_GRAY)
             if column >= input_count + 1:
-                is_diagnostic_detail = headers[column - 1] in {
-                    'B31G Detail', 'Type A Detail', 'Type B Detail',
-                }
-                cell.alignment = Alignment(
-                    vertical='top',
-                    wrap_text=not is_diagnostic_detail,
-                    shrink_to_fit=is_diagnostic_detail,
-                )
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
 
     _add_dropdowns(worksheet, _MAIN_DROPDOWN_NAMES, MAX_ROWS)
-    _add_status_formatting(worksheet, input_count + 2)
     worksheet.protection.sheet = True
     worksheet.protection.autoFilter = False
     worksheet.protection.selectLockedCells = False
     worksheet.protection.selectUnlockedCells = False
     set_capped_column_widths(worksheet)
-    for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
+    for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V'):
         worksheet.column_dimensions[column].width = 28
-    worksheet.column_dimensions['W'].width = 16
+    for column in ('W', 'Y'):
+        worksheet.column_dimensions[column].width = 16
 
 
 def _build_individual_defects(worksheet) -> None:

@@ -138,7 +138,29 @@ def legacy_workbook_bytes_with_rows(rows, *, sheet_count=7):
         del workbook['Warnings']
     main = workbook['Batch Input & Results']
     main.delete_cols(9, 2)
-    main.delete_cols(len(LEGACY_INPUT_HEADERS) + len(LEGACY_OUTPUT_HEADERS) + 1, 6)
+    for column, header in enumerate(
+        LEGACY_INPUT_HEADERS + LEGACY_OUTPUT_HEADERS, start=1,
+    ):
+        main.cell(1, column).value = header
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def historical_v12_workbook_bytes_with_rows(rows):
+    """Create the former wide eight-sheet v1.2 contract for upgrade tests."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from batch_schema import HISTORICAL_V12_OUTPUT_HEADERS, INPUT_HEADERS
+
+    workbook = load_workbook(BytesIO(workbook_bytes_with_rows(rows)))
+    main = workbook['Batch Input & Results']
+    for column, header in enumerate(
+        INPUT_HEADERS + HISTORICAL_V12_OUTPUT_HEADERS, start=1,
+    ):
+        main.cell(1, column).value = header
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()

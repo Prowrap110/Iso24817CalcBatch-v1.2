@@ -86,13 +86,26 @@ INPUT_HEADERS = _insert_after(
 )
 
 
-OUTPUT_HEADERS = LEGACY_OUTPUT_HEADERS + (
+HISTORICAL_V12_OUTPUT_HEADERS = LEGACY_OUTPUT_HEADERS + (
     'Repair Zone Length [mm]',
     '3t Interaction Threshold [mm]',
     'B31G Candidate Count',
     'Governing Defect ID',
     'Governing B31G Length [mm]',
     'Governing B31G Remaining Wall [mm]',
+)
+
+
+OUTPUT_HEADERS = (
+    'Wall Loss [%]',
+    'Required Structural Thickness [mm]',
+    'Installed Plies',
+    'Total Repair Length [mm]',
+    'Cloth Band Count',
+    'Procurement Axial Length [mm]',
+    'Fabric Area [m2]',
+    'Epoxy Mass [kg]',
+    'Repair Zone Length [mm]',
 )
 
 

@@ -40,16 +40,17 @@ def test_v12_inputs_insert_basis_and_group_after_defect_length():
 
 
 def test_current_outputs_keep_legacy_outputs_and_add_linked_corrosion_results():
-    from batch_schema import LEGACY_OUTPUT_HEADERS
-
-    assert OUTPUT_HEADERS[:len(LEGACY_OUTPUT_HEADERS)] == LEGACY_OUTPUT_HEADERS
-    assert OUTPUT_HEADERS[-6:] == (
+    """Catches diagnostic workbook columns escaping the compact public contract."""
+    assert OUTPUT_HEADERS == (
+        'Wall Loss [%]',
+        'Required Structural Thickness [mm]',
+        'Installed Plies',
+        'Total Repair Length [mm]',
+        'Cloth Band Count',
+        'Procurement Axial Length [mm]',
+        'Fabric Area [m2]',
+        'Epoxy Mass [kg]',
         'Repair Zone Length [mm]',
-        '3t Interaction Threshold [mm]',
-        'B31G Candidate Count',
-        'Governing Defect ID',
-        'Governing B31G Length [mm]',
-        'Governing B31G Remaining Wall [mm]',
     )
 
 
