@@ -40,6 +40,17 @@ def test_warning_codes_preserve_first_occurrence_order_and_remove_duplicates():
     assert warning_codes(messages) == ('W018', 'W001')
 
 
+def test_candidate_prefixed_b31g_warnings_keep_their_permanent_codes():
+    """Catches linked-detail warning prefixes breaking B31G traceability."""
+    messages = (
+        'Defect ID D-01: B31G: SMYS > 483 MPa: falling back to Original B31G.',
+        'Defect ID D-01: B31G Level 1: the corroded pipe alone is NOT '
+        'acceptable at the design pressure.',
+    )
+
+    assert warning_codes(messages) == ('W011', 'W013')
+
+
 def test_unknown_warning_is_rejected_instead_of_receiving_an_improvised_code():
     """Catches uncatalogued engineering conditions that would become untraceable."""
     with pytest.raises(UnmappedWarningError, match='Unmapped compliance warning'):

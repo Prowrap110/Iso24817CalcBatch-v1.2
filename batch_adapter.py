@@ -6,6 +6,11 @@ from typing import Any
 from batch_schema import APPROVED_CLOTH_WIDTHS_MM, BatchInfo, ValidatedRow
 from batch_mechanisms import normalize_upload_mechanism
 from batch_status import CalculationStatus, classify_result
+from engine.corrosion_defects import (
+    ACTUAL_DEFECT_LENGTH,
+    ENTER_MANUALLY,
+    IndividualCorrosionDefect,
+)
 from engine.prowrap_calculations import (
     apply_type_a_class3_result_to_repair,
     calculate_repair,
@@ -17,12 +22,24 @@ from warning_catalog import warning_codes
 
 
 @dataclass(frozen=True)
+class CandidateCalculation:
+    defect_id: str
+    method: str
+    applicable: bool
+    acceptable: bool
+    credited_safe_pressure_bar: float
+    governing: bool
+    warning_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RowCalculation:
     source_excel_row: int
     status: CalculationStatus
     outputs: dict[str, object]
     error_code: str = ''
     error_message: str = ''
+    candidate_calculations: tuple[CandidateCalculation, ...] = ()
 
 
 _INSTALLABLE_OUTPUTS = (
@@ -40,11 +57,22 @@ _INSTALLABLE_OUTPUTS = (
 )
 
 
-def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
+def calculate_row(
+    batch_info: BatchInfo,
+    row: ValidatedRow,
+    individual_defects: tuple[IndividualCorrosionDefect, ...] = (),
+) -> RowCalculation:
     """Calculate a validated row without translating unexpected failures."""
     values = row.values
     try:
         mechanism = normalize_upload_mechanism(values['Mechanism'])
+        defect_length_basis = (
+            values.get('Defect Length Basis') or ACTUAL_DEFECT_LENGTH
+        )
+        assessment_remaining_wall = _assessment_remaining_wall(
+            values,
+            individual_defects,
+        )
         result = calculate_repair(
             customer=batch_info.customer,
             location=batch_info.project_location,
@@ -57,7 +85,7 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
             defect_type=mechanism,
             defect_loc=values['Defect Location'],
             length=values['Defect Length [mm]'],
-            rem_wall=values['Remaining Wall [mm]'],
+            rem_wall=assessment_remaining_wall,
             internal_corrosion_rate=values['Internal Corrosion Rate [mm/year]'] or 0.0,
             design_life=values['Design Life [years]'],
             design_factor=values['Design Factor'],
@@ -67,13 +95,15 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
             axial_load_case=values['Axial Load Case'],
             cloth_width_mm=values['Prowrap CF Cloth Width [mm]'],
             allow_unqualified_temperature=True,
+            defect_length_basis=defect_length_basis,
+            individual_defects=individual_defects,
         )
         if _should_run_type_a_check(values, result):
             type_a = calculate_type_a_class3_prowrap_check(
                 od=values['Pipe OD [mm]'],
                 pressure_bar=values['Design Pressure [bar]'],
                 temp=values['Operating Temperature [degC]'],
-                rem_wall=values['Remaining Wall [mm]'],
+                rem_wall=result['rem_wall_eol'],
                 design_life=values['Design Life [years]'],
                 substrate_allowable_pressure_bar=substrate_credit_bar_for_iso_check(result),
                 installation_temp=values['Installation Temperature [degC]'],
@@ -115,7 +145,43 @@ def calculate_row(batch_info: BatchInfo, row: ValidatedRow) -> RowCalculation:
         source_excel_row=row.source_excel_row,
         status=status,
         outputs=outputs,
+        candidate_calculations=_candidate_calculations(result),
     )
+
+
+def _assessment_remaining_wall(
+    values: dict[str, Any],
+    individual_defects: tuple[IndividualCorrosionDefect, ...],
+) -> float | None:
+    """Use the conservative linked wall when manual-mode main cells are blank."""
+    if values.get('Defect Length Basis') != ENTER_MANUALLY:
+        return values['Remaining Wall [mm]']
+    if not individual_defects:
+        return 0.0
+    return min(defect.remaining_wall_mm for defect in individual_defects)
+
+
+def _candidate_calculations(result: dict[str, Any]) -> tuple[CandidateCalculation, ...]:
+    """Expose ordered B31G traces for linked individual-defect rows."""
+    calculations = []
+    for item in result['b31g_assessments']:
+        assessment = item['assessment']
+        prefix = f"Defect ID {item['defect_id']}: "
+        messages = tuple(
+            warning
+            for warning in result['compliance_warnings']
+            if str(warning).startswith(prefix)
+        )
+        calculations.append(CandidateCalculation(
+            defect_id=item['defect_id'],
+            method=assessment['method'],
+            applicable=assessment['applicable'],
+            acceptable=assessment['acceptable'],
+            credited_safe_pressure_bar=item['credited_pressure_mpa'] * 10.0,
+            governing=item['defect_id'] == result['governing_defect_id'],
+            warning_codes=warning_codes(messages),
+        ))
+    return tuple(calculations)
 
 
 def _should_run_type_a_check(values: dict[str, Any], result: dict[str, Any]) -> bool:
@@ -193,7 +259,15 @@ def _map_outputs(
         'Fabric Area [m2]': result['optimized_sqm'],
         'Epoxy Mass [kg]': result['epoxy_kg'],
         'Compliance Warnings': warnings,
-        'B31G Detail': b31g,
+        'B31G Detail': result['b31g_assessments'] or b31g,
         'Type A Detail': type_a_detail,
         'Type B Detail': result['type_b_details'],
+        'Repair Zone Length [mm]': result['repair_zone_length_mm'],
+        '3t Interaction Threshold [mm]': result['interaction_distance_mm'],
+        'B31G Candidate Count': len(result['b31g_assessments']),
+        'Governing Defect ID': result['governing_defect_id'],
+        'Governing B31G Length [mm]': result['governing_b31g_length_mm'],
+        'Governing B31G Remaining Wall [mm]': (
+            result['governing_b31g_remaining_wall_mm']
+        ),
     }
