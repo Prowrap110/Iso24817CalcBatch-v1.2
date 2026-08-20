@@ -211,11 +211,11 @@ def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
     assert second_detail.cell(2, folias_column).value == 'Infinity'
 
 
-def test_warning_register_scans_detail_rows_501_502_and_2001():
-    """Catches detail warnings being scanned with the 500-row main-table limit."""
+def test_warning_register_scans_the_last_controlled_detail_rows():
+    """Catches warning aggregation stopping before the 150-row detail boundary."""
     workbook = _workbook(workbook_bytes_with_rows([_manual_row()]))
     detail = workbook['Individual Defects']
-    for excel_row in (501, 502, 2001):
+    for excel_row in (2, 150, 151):
         values = detail_values(
             group='R-001', defect=f'D-{excel_row}', length=10, wall=9.652,
         )
@@ -230,11 +230,11 @@ def test_warning_register_scans_detail_rows_501_502_and_2001():
     }
 
     assert affected_rows['W013'] == (
-        'Main 2; Individual Defects 501, 502, 2001'
+        'Main 2; Individual Defects 2, 150, 151'
     )
 
 
-def test_501_detail_candidates_keep_scalar_audit_rows():
+def test_last_controlled_detail_candidate_keeps_scalar_audit_rows():
     """Catches linked candidate audits being dropped from the detail worksheet."""
     source = workbook_bytes_with_rows(
         [_manual_row()],
@@ -242,19 +242,19 @@ def test_501_detail_candidates_keep_scalar_audit_rows():
             detail_values(
                 group='R-001', defect=f'D-{index:04d}', length=10, wall=9.652,
             )
-            for index in range(1, 502)
+            for index in range(1, MAX_DETAIL_ROWS + 1)
         ],
     )
 
-    result = process_workbook(source, FIXED_TIME, '501-details.xlsx')
+    result = process_workbook(source, FIXED_TIME, '150-details.xlsx')
     workbook = _workbook(result.workbook_bytes)
     detail = workbook['Individual Defects']
     detail_headings = tuple(cell.value for cell in detail[1])
     last_audit = {
-        heading: detail.cell(502, detail_headings.index(heading) + 1).value
+        heading: detail.cell(151, detail_headings.index(heading) + 1).value
         for heading in DETAIL_OUTPUT_HEADERS
     }
-    assert last_audit['Source Excel Row'] == 502
+    assert last_audit['Source Excel Row'] == 151
     assert last_audit['Calculation Status'] == 'OK'
     assert last_audit['B31G d/t'] == pytest.approx(0.19566666666666674)
     assert last_audit['B31G Safe Pressure [bar]'] == pytest.approx(88.2257484144555)
@@ -264,7 +264,7 @@ def test_501_detail_candidates_keep_scalar_audit_rows():
     assert last_audit['Assessment Warning Codes'] == 'W013'
 
 
-def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
+def test_full_150_detail_audit_is_bounded_and_stable_on_reupload():
     """Catches maximum-size linked audits overflowing or changing on rebuild."""
     main_row = _manual_row()
     main_row['Design Pressure [bar]'] = 50.0
@@ -279,7 +279,7 @@ def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
         ],
     )
 
-    first = process_workbook(source, FIXED_TIME, '2000-details.xlsx')
+    first = process_workbook(source, FIXED_TIME, '150-details.xlsx')
     first_workbook = _workbook(first.workbook_bytes)
     detail = first_workbook['Individual Defects']
     detail_headings = tuple(cell.value for cell in detail[1])
@@ -301,21 +301,21 @@ def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
         'Governing Defect',
     )
     first_last_audit = tuple(
-        detail.cell(2001, detail_headings.index(heading) + 1).value
+        detail.cell(MAX_DETAIL_ROWS + 1, detail_headings.index(heading) + 1).value
         for heading in audit_headings
     )
-    assert first_last_audit[0:2] == (2001, 'OK')
+    assert first_last_audit[0:2] == (MAX_DETAIL_ROWS + 1, 'OK')
     assert all(value is not None for value in first_last_audit[2:-1])
     assert first_last_audit[-1] is None
 
     second = process_workbook(
-        first.workbook_bytes, FIXED_TIME, '2000-details-processed.xlsx',
+        first.workbook_bytes, FIXED_TIME, '150-details-processed.xlsx',
     )
     second_workbook = _workbook(second.workbook_bytes)
     second_detail = second_workbook['Individual Defects']
 
     assert tuple(
-        second_detail.cell(2001, detail_headings.index(heading) + 1).value
+        second_detail.cell(MAX_DETAIL_ROWS + 1, detail_headings.index(heading) + 1).value
         for heading in audit_headings
     ) == first_last_audit
 
@@ -591,7 +591,7 @@ def test_formula_inputs_and_corrupt_or_encrypted_data_are_rejected_safely():
 
 
 @pytest.mark.parametrize(('worksheet_name', 'coordinate'), [
-    ('Batch Input & Results', 'AY501'),
+    ('Batch Input & Results', 'AY152'),
     ('Summary', 'B30'),
 ])
 def test_formula_anywhere_in_the_controlled_workbook_is_rejected(worksheet_name, coordinate):
@@ -670,7 +670,7 @@ def test_dense_worksheet_is_rejected_before_openpyxl_materializes_cells(monkeypa
     """Catches small compressed uploads that amplify into excessive cell objects."""
     import workbook_processor
 
-    source = _dense_workbook_bytes(100_001)
+    source = _dense_workbook_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
     assert len(source) < MAX_UPLOAD_BYTES
 
     def fail_if_loaded(*_args, **_kwargs):
@@ -692,7 +692,7 @@ def test_relocated_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     """Catches a worksheet relationship moved outside xl/worksheets bypassing the cap."""
     import workbook_processor
 
-    source = _relocated_dense_workbook_bytes(100_001)
+    source = _relocated_dense_workbook_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
     assert len(source) < MAX_UPLOAD_BYTES
 
     def fail_if_loaded(*_args, **_kwargs):
@@ -716,7 +716,7 @@ def test_relationship_worksheet_with_nonworksheet_content_type_rejects_before_op
     """Catches content-type relabeling hiding a relationship-reachable dense sheet."""
     import workbook_processor
 
-    source = _relabeled_dense_worksheet_bytes(100_001)
+    source = _relabeled_dense_worksheet_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
     assert len(source) < MAX_UPLOAD_BYTES
 
     def fail_if_loaded(*_args, **_kwargs):
@@ -741,7 +741,7 @@ def test_foreign_namespace_duplicate_relationship_cannot_shadow_dense_target(
     import workbook_processor
 
     source = _dense_workbook_with_duplicate_relationship(
-        100_001,
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
         relationship_namespace='urn:protap:foreign-relationships',
     )
 
@@ -764,7 +764,9 @@ def test_duplicate_opc_relationship_id_is_rejected_before_openpyxl(monkeypatch):
     """Ambiguous genuine OPC relationship IDs are invalid package metadata."""
     import workbook_processor
 
-    source = _dense_workbook_with_duplicate_relationship(100_001)
+    source = _dense_workbook_with_duplicate_relationship(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
 
     def fail_if_loaded(*_args, **_kwargs):
         raise AssertionError('openpyxl reached duplicate OPC relationship bypass')
@@ -795,7 +797,7 @@ def test_arbitrary_suffix_dense_worksheet_is_rejected_before_openpyxl(monkeypatc
     import workbook_processor
 
     source = _relocated_dense_workbook_bytes(
-        100_001,
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
         new_path='xl/custom/dense.data',
     )
     assert len(source) < MAX_UPLOAD_BYTES
@@ -855,7 +857,7 @@ def test_strict_spreadsheetml_dense_worksheet_is_still_bounded(monkeypatch):
     import workbook_processor
 
     source = _dense_workbook_bytes(
-        100_001,
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
         namespace='http://purl.oclc.org/ooxml/spreadsheetml/main',
     )
 
@@ -876,7 +878,11 @@ def test_strict_spreadsheetml_dense_worksheet_is_still_bounded(monkeypatch):
 
 def test_foreign_custom_xml_with_worksheet_names_is_ignored():
     """Catches local-name scanning that treats unrelated customer XML as a sheet."""
-    source = _foreign_custom_xml_workbook_bytes(100_001)
+    import workbook_processor
+
+    source = _foreign_custom_xml_workbook_bytes(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
     assert len(source) < MAX_UPLOAD_BYTES
 
     inspection = inspect_workbook(source)
@@ -887,7 +893,11 @@ def test_foreign_custom_xml_with_worksheet_names_is_ignored():
 
 def test_foreign_cell_elements_inside_a_real_worksheet_extension_are_ignored():
     """Catches foreign extension elements being counted as SpreadsheetML cells."""
-    source = _worksheet_with_foreign_extension_bytes(100_001)
+    import workbook_processor
+
+    source = _worksheet_with_foreign_extension_bytes(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
     assert len(source) < MAX_UPLOAD_BYTES
 
     with pytest.warns(UserWarning, match='Unknown extension is not supported'):
@@ -897,8 +907,8 @@ def test_foreign_cell_elements_inside_a_real_worksheet_extension_are_ignored():
     assert inspection.populated_rows == 1
 
 
-def test_more_than_500_populated_rows_is_a_workbook_error():
-    source = workbook_bytes_with_rows([valid_row_values() for _ in range(501)])
+def test_more_than_150_populated_rows_is_a_workbook_error():
+    source = workbook_bytes_with_rows([valid_row_values() for _ in range(151)])
 
     inspection = inspect_workbook(source)
 
@@ -906,7 +916,7 @@ def test_more_than_500_populated_rows_is_a_workbook_error():
     assert [issue.code for issue in inspection.workbook_errors] == ['INPUT_ROW_OUT_OF_RANGE']
 
 
-@pytest.mark.parametrize('excel_row', [502, 1000])
+@pytest.mark.parametrize('excel_row', [152, 1000])
 def test_populated_input_beyond_controlled_rows_is_a_workbook_error(excel_row):
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
     workbook['Batch Input & Results'].cell(excel_row, 1).value = 508.0
@@ -1110,16 +1120,36 @@ def test_changed_cost_heading_is_a_workbook_error():
     ]
 
 
-def test_exactly_500_controlled_rows_remain_valid():
+def test_exactly_150_controlled_rows_remain_valid():
     inspection = inspect_workbook(
-        workbook_bytes_with_rows([valid_row_values() for _ in range(500)])
+        workbook_bytes_with_rows([valid_row_values() for _ in range(150)])
     )
 
-    assert inspection.populated_rows == 500
+    assert inspection.populated_rows == 150
     assert inspection.workbook_errors == ()
 
 
-def test_exactly_2000_detail_rows_are_kept_and_first_row_beyond_is_rejected():
+def test_maximum_processed_cost_region_ends_at_row_155():
+    """Catches Cost formulas or the compact table extending beyond 150 rows."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values() for _ in range(150)]),
+        FIXED_TIME,
+        '150-repairs.xlsx',
+    )
+    cost = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert cost.tables['CostRows'].ref == 'A5:X155'
+    assert [cost[f'{column}155'].value for column in ('U', 'V', 'X')] == [
+        cost_calculation.cost_formula(155),
+        cost_calculation.price_formula(155),
+        cost_calculation.total_amount_formula(155),
+    ]
+    assert [cost[f'{column}156'].value for column in ('U', 'V', 'W', 'X')] == [
+        None, None, None, None,
+    ]
+
+
+def test_exactly_150_detail_rows_are_kept_and_first_row_beyond_is_rejected():
     """Catches an off-by-one detail bound or an unbounded detail scan."""
     exact = workbook_bytes_with_rows(
         [valid_row_values()],
@@ -1131,13 +1161,13 @@ def test_exactly_2000_detail_rows_are_kept_and_first_row_beyond_is_rejected():
     assert inspect_workbook(exact).workbook_errors == ()
 
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
-    workbook['Individual Defects'].cell(MAX_DETAIL_ROWS + 2, 1).value = 'ORPHAN'
+    workbook['Individual Defects'].cell(152, 1).value = 'ORPHAN'
     inspection = inspect_workbook(_saved(workbook))
 
     assert [issue.code for issue in inspection.workbook_errors] == [
         'DETAIL_ROW_OUT_OF_RANGE',
     ]
-    assert f'A{MAX_DETAIL_ROWS + 2}' in inspection.workbook_errors[0].message
+    assert 'A152' in inspection.workbook_errors[0].message
 
 
 def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():

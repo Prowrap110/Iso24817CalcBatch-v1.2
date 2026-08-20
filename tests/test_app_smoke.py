@@ -53,6 +53,16 @@ def test_app_lists_canonical_dents_and_explains_legacy_migration():
     )
 
 
+def test_app_states_compact_row_and_commercial_contract():
+    """Catches the screen promising obsolete row counts or hiding Quantity totals."""
+    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()
+    rendered = '\n'.join(item.value for item in (*app.markdown, *app.caption))
+
+    assert 'up to 150 continuous-repair rows and 150 linked individual-defect rows' in rendered
+    assert 'Quantity is editable' in rendered
+    assert 'Total Amount is a controlled Price x Quantity formula' in rendered
+
+
 def test_uploader_help_distinguishes_rejected_and_controlled_formulas():
     """Catch guidance that incorrectly says every formula-bearing workbook is rejected."""
     app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()

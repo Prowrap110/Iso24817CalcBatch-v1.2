@@ -13,7 +13,7 @@ def test_row_inputs_begin_with_pipe_od_and_exclude_common_fields():
     assert 'Customer' not in INPUT_HEADERS
     assert 'Project Location' not in INPUT_HEADERS
     assert 'Report No' not in INPUT_HEADERS
-    assert MAX_ROWS == 500
+    assert MAX_ROWS == 150
 
 
 def test_batch_info_holds_three_common_values():
@@ -35,8 +35,8 @@ def test_v12_inputs_insert_basis_and_group_after_defect_length():
         'Repair Group ID',
         'Remaining Wall [mm]',
     )
-    assert MAX_ROWS == 500
-    assert MAX_DETAIL_ROWS == 2000
+    assert MAX_ROWS == 150
+    assert MAX_DETAIL_ROWS == 150
 
 
 def test_current_outputs_keep_legacy_outputs_and_add_linked_corrosion_results():

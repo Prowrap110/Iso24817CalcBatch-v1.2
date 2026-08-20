@@ -210,7 +210,7 @@ def _build_data_sheet(worksheet) -> None:
 
 
 def _build_individual_defects(worksheet) -> None:
-    """Build the protected 2,000-row linked-corrosion input table."""
+    """Build the protected 150-row linked-corrosion input table."""
     headers = DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS
     input_count = len(DETAIL_INPUT_HEADERS)
     for column, header in enumerate(headers, start=1):
@@ -392,23 +392,24 @@ def _build_instructions(worksheet) -> None:
         ('A1', 'PROWRAP CalcBatch v1.2 — Instructions', True),
         ('A3', '1. Complete Customer, Project Location, and Report No once on the Batch Information sheet.', False),
         ('A4', '2. Enter one main row per continuous repair on Batch Input & Results; the first input is Pipe OD [mm].', False),
-        ('A5', f'3. Enter up to {MAX_ROWS} populated rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
-        ('A6', '4. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
-        ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
-        ('A8', '6. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
-        ('A9', '7. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
-        ('A10', '8. On Cost Calculation, B3 (CF Cost / m2), E3 (Epoxy Cost / kg), and H3 (Price Multiplier) are highlighted and editable. They may be blank or retain values from a previously processed workbook.', False),
-        ('A11', '9. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
-        ('A12', '10. Price = Cost x Price Multiplier. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
-        ('A13', '11. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost and Price formulas and may be safely uploaded again.', False),
-        ('A14', '12. Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
-        ('A15', '13. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
-        ('A16', 'Status meanings', True),
-        ('A17', 'OK — a valid result with no review warning.', False),
-        ('A18', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
-        ('A19', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
-        ('A20', 'INPUT ERROR — correct the indicated input and calculate again.', False),
-        ('A21', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
+        ('A5', f'3. Enter up to {MAX_ROWS} populated main rows and {MAX_DETAIL_ROWS} Individual Defects rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
+        ('A6', '4. The only main outputs are Wall Loss [%], Required Structural Thickness [mm], Installed Plies, Total Repair Length [mm], Cloth Band Count, Procurement Axial Length [mm], Fabric Area [m2], Epoxy Mass [kg], and Repair Zone Length [mm].', False),
+        ('A7', '5. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
+        ('A8', '6. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
+        ('A9', '7. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
+        ('A10', '8. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
+        ('A11', '9. On Cost Calculation, B3 (CF Cost / m2), E3 (Epoxy Cost / kg), and H3 (Price Multiplier) are highlighted and editable, as is Quantity. The assumptions may be blank or retain values from a previously processed workbook. Quantity is editable only as a blank or non-negative number and may retain a value from a previously processed workbook.', False),
+        ('A12', '10. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
+        ('A13', '11. Price = Cost x Price Multiplier. Total Amount = Price x Quantity. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
+        ('A14', '12. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost, Price, and Total Amount formulas and may be safely uploaded again.', False),
+        ('A15', '13. Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
+        ('A16', '14. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
+        ('A17', 'Status meanings', True),
+        ('A18', 'OK — a valid result with no review warning.', False),
+        ('A19', 'REVIEW REQUIRED — a numeric result exists, but an engineering or product-approval condition needs review.', False),
+        ('A20', 'NOT REPAIRABLE — the Type B Formula 12 route has no repair solution for the requested case.', False),
+        ('A21', 'INPUT ERROR — correct the indicated input and calculate again.', False),
+        ('A22', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
         ('A23', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The input template contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
         ('A24', 'Linked corrosion modes: Actual defect length = continuous or interacting B31G length. Independent defects = 10 x 10 mm, each separated by more than 3t. t means nominal pipe wall thickness. Enter manually = leave main Remaining Wall blank and link detail rows with Repair Group ID. Defect Length remains the complete outer-to-outer continuous repair-zone span.', False),
     )

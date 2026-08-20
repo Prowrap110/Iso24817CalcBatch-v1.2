@@ -68,7 +68,7 @@ def test_template_has_blank_editable_cost_sheet_in_new_controlled_order():
     assert cost['X6'].protection.locked is True
     assert cost['W6'].fill.fgColor.rgb == '00FFF2CC'
     assert any(
-        validation.type == 'decimal' and str(validation.sqref) == 'W6:W505'
+        validation.type == 'decimal' and str(validation.sqref) == 'W6:W155'
         for validation in cost.data_validations.dataValidation
     )
     assert cost.freeze_panes == 'A6'
@@ -86,7 +86,7 @@ def test_template_visibly_highlights_cost_assumption_value_cells():
     assert [cell.number_format for cell in inputs] == ['#,##0.00'] * 3
     assert [cell.protection.locked for cell in inputs] == [False] * 3
     assert {str(validation.sqref) for validation in cost.data_validations.dataValidation} == {
-        'B3 E3 H3', 'W6:W505',
+        'B3 E3 H3', 'W6:W155',
     }
 
 
@@ -158,7 +158,7 @@ def test_template_uses_canonical_headings_and_a_filterable_compact_table():
     assert headings == list(INPUT_HEADERS + OUTPUT_HEADERS)
     assert len(data.tables) == 1
     table = next(iter(data.tables.values()))
-    assert table.ref == f'A1:AC{MAX_ROWS + 1}'
+    assert table.ref == 'A1:AC151'
     assert table.autoFilter.ref == table.ref
 
 
@@ -173,7 +173,7 @@ def test_v12_template_has_linked_detail_sheet_in_controlled_order():
     detail = workbook['Individual Defects']
     assert tuple(cell.value for cell in detail[1]) == DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS
     assert detail.freeze_panes == 'B2'
-    assert detail.tables['IndividualDefects'].ref.endswith(str(MAX_DETAIL_ROWS + 1))
+    assert detail.tables['IndividualDefects'].ref == 'A1:X151'
     assert detail.protection.sheet is True
     assert detail.protection.autoFilter is False
     assert detail['A2'].protection.locked is False
@@ -190,15 +190,15 @@ def test_v12_template_has_exact_basis_and_yes_dropdowns():
         item.formula1: str(item.sqref)
         for item in main.data_validations.dataValidation
     }
-    assert validations['=DefectLengthBasisChoices'] == 'I2:I501'
+    assert validations['=DefectLengthBasisChoices'] == 'I2:I151'
     detail_validations = {
         item.formula1: str(item.sqref)
         for item in detail.data_validations.dataValidation
     }
-    assert detail_validations['=SeparationChoices'] == 'E2:E2001'
+    assert detail_validations['=SeparationChoices'] == 'E2:E151'
 
 
-def test_template_adds_dropdowns_for_every_selection_through_row_501():
+def test_template_adds_dropdowns_for_every_selection_through_row_151():
     """Catches a controlled selection that can be entered unchecked in later rows."""
     workbook = _template_workbook()
     data = workbook['Batch Input & Results']
@@ -376,6 +376,10 @@ def test_template_contains_no_formulas_and_has_user_guidance():
         if cell.value is not None
     )
     assert 'warnings worksheet' in instruction_text
+    assert 'up to 150 populated main rows and 150 individual defects rows' in instruction_text
+    assert 'wall loss [%], required structural thickness [mm], installed plies, total repair length [mm], cloth band count, procurement axial length [mm], fabric area [m2], epoxy mass [kg], and repair zone length [mm]' in instruction_text
+    assert 'quantity is editable' in instruction_text
+    assert 'total amount = price x quantity' in instruction_text
     assert '300 mm and 500 mm' in instruction_text
     assert 'tg = 110' in instruction_text
     assert 'b3 (cf cost / m2), e3 (epoxy cost / kg), and h3 (price multiplier)' in instruction_text

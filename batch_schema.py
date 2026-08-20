@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 
 
-MAX_ROWS = 500
-MAX_DETAIL_ROWS = 2000
+MAX_ROWS = 150
+MAX_DETAIL_ROWS = 150
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 STITCH_OVERLAP_MM = 50.0
 APPROVED_CLOTH_WIDTHS_MM = (300.0, 500.0)

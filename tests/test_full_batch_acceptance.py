@@ -176,12 +176,12 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
         'B3', 'B7', 'B24', 'B25',
     ))
     assert (main.tables['BatchRows'].ref, main.tables['BatchRows'].autoFilter.ref) == (
-        'A1:AC501', 'A1:AC501',
+        'A1:AC151', 'A1:AC151',
     )
     assert (
         detail.tables['IndividualDefects'].ref,
         detail.tables['IndividualDefects'].autoFilter.ref,
-    ) == ('A1:X2001', 'A1:X2001')
+    ) == ('A1:X151', 'A1:X151')
     assert (main.protection.autoFilter, main.protection.selectLockedCells,
             main.protection.selectUnlockedCells) == (False, False, False)
     assert (detail.protection.autoFilter, detail.protection.selectLockedCells,

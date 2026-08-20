@@ -1,26 +1,29 @@
-# Deploy CalcBatch v1.2 as a separate application
+# Deploy CalcBatch v1.2 to its existing public application
 
-## Stop: confirm the target before doing anything
+## Fixed release target
 
-This release is only for a **new GitHub repository** and a **new Streamlit Community Cloud application with a new URL**. Stop immediately if the selected repository or Streamlit application is either:
+Deploy only the reviewed `feature/linked-corrosion-v12` branch of the existing
+CalcBatch v1.2 repository to the existing public Streamlit application:
 
-- the current CalcBatch repository/application; or
-- `Prowrap110/Iso24817Calcv1.1` or `https://iso24817calc-prowrapv11.streamlit.app`.
+`https://iso24817calcbatch-prowrapv12.streamlit.app`
 
-Do not merge into, push to, reconfigure, replace, rename, redirect, or deploy over either older calculator. They remain separate products and URLs.
+Do not create a new repository, branch, Streamlit application, or URL. Do not
+merge into, push to, reconfigure, replace, rename, redirect, or deploy over
+the PROWRAP v1.1 calculator or any older CalcBatch application.
 
-## Separate release procedure
+## Release procedure
 
-1. Create or select the dedicated repository for this release, named clearly as `Iso24817CalcBatch-v1.2`. Confirm it is not the current CalcBatch repository.
-2. Push only the reviewed CalcBatch v1.2 branch to that new repository.
-3. In Streamlit Community Cloud, create a **new** application from that repository, with `app.py` as the entry point and Python 3.11.
-4. Choose and record a new, distinct Streamlit URL. Do not reuse a current CalcBatch or v1.1 URL.
-5. Download the template and verify this exact eight-sheet order: `Batch Information`, `Batch Input & Results`, `Individual Defects`, `Cost Calculation`, `Warnings`, `Summary`, `Instructions`, and hidden `Lists`.
-6. Upload the generated six-row acceptance workbook and confirm Actual, Independent, linked Manual, invalid Manual group, `Dent no-crack`, and `Dent w/crack` all appear in that order.
-7. Confirm the three corrosion comparison rows retain a 1,000 mm repair-zone length. Reconcile their safe pressures as 7.571542406120033 MPa, 8.82257484144555 MPa, and 8.783461911867068 MPa; reconcile installed plies as 12, 7, and 7. Confirm Manual defect `D-02` governs.
-8. Confirm the processed workbook records Batch Engine Version `1.2.0` and Pinned Source Revision `91b68d6`.
-9. Confirm the Cost Calculation table contains the twenty semantic engineering fields plus Cost and Price. `B3`, `E3`, and `H3` remain blank, highlighted, and editable. Cost is `Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg`; Price is `Cost x Price Multiplier`.
-10. Re-upload a processed workbook with non-negative B3/E3/H3 values. Confirm the values persist while the trusted eight-sheet output, linked details, warnings, and exact controlled Cost/Price formulas are rebuilt.
-11. Confirm controlled five-, six-, and seven-sheet historical workbooks upgrade into the eight-sheet v1.2 output; eligible legacy external-corrosion rows use Actual defect length.
+1. Confirm the checked-out repository is CalcBatch v1.2 and the branch is `feature/linked-corrosion-v12`.
+2. Push only the reviewed CalcBatch v1.2 commit to that existing branch. Do not alter Streamlit application settings, entry point, secrets, or URL.
+3. Allow the existing public application at `https://iso24817calcbatch-prowrapv12.streamlit.app` to redeploy from that branch.
+4. Download the template and verify this exact eight-sheet order: `Batch Information`, `Batch Input & Results`, `Individual Defects`, `Cost Calculation`, `Warnings`, `Summary`, `Instructions`, and hidden `Lists`.
+5. Verify the main table/filter is `A1:AC151`, the Individual Defects table/filter is `A1:X151`, and both accept no more than 150 populated rows. Confirm a populated input at Excel row 152 is rejected on either input sheet.
+6. Verify the only nine main outputs, in order, are `Wall Loss [%]`, `Required Structural Thickness [mm]`, `Installed Plies`, `Total Repair Length [mm]`, `Cloth Band Count`, `Procurement Axial Length [mm]`, `Fabric Area [m2]`, `Epoxy Mass [kg]`, and `Repair Zone Length [mm]`.
+7. Upload the generated six-row acceptance workbook and confirm Actual, Independent, linked Manual, invalid Manual group, `Dent no-crack`, and `Dent w/crack` all appear in that order.
+8. Confirm the three corrosion comparison rows retain a 1,000 mm repair-zone length. Reconcile their safe pressures as 7.571542406120033 MPa, 8.82257484144555 MPa, and 8.783461911867068 MPa; reconcile installed plies as 12, 7, and 7. Confirm Manual defect `D-02` governs.
+9. Confirm the processed workbook records Batch Engine Version `1.2.0` and Pinned Source Revision `91b68d6`.
+10. Confirm the Cost Calculation table has `A5:X...` coverage for the populated compact rows. `B3`, `E3`, `H3`, and `W6:W155` Quantity are highlighted and editable; Quantity accepts only a blank or non-negative number. `U`, `V`, and `X` hold only the controlled Cost, Price, and Total Amount formulas, with Total Amount equal to `Price x Quantity`.
+11. Re-upload a processed workbook with non-negative B3/E3/H3 values and valid Quantity values. Confirm assumptions and Quantity persist while the trusted eight-sheet output, linked details, warnings, and exact controlled formulas are rebuilt.
+12. Confirm controlled five-, six-, seven-sheet, and historical wide eight-sheet workbooks within the new 150-row limits upgrade into the compact eight-sheet v1.2 output; eligible legacy external-corrosion rows use Actual defect length.
 
 The application must continue to process one workbook at a time in session/temporary memory only. Do not configure persistent customer-workbook storage.

@@ -107,7 +107,7 @@ def main() -> None:
     st.set_page_config(page_title='PROWRAP CalcBatch v1.2', layout='wide')
     st.title('PROWRAP CalcBatch v1.2')
     st.write(
-        'Calculate up to 500 independent pipeline defects from one controlled Excel workbook. '
+        'Calculate up to 150 continuous-repair rows and 150 linked individual-defect rows from one controlled Excel workbook. '
         'Customer, Project Location, and Report No are entered once for the whole batch.'
     )
     st.info(
@@ -136,6 +136,10 @@ def main() -> None:
         'and matching rows with the same ID on the Individual Defects sheet. '
         'Leave the main Remaining Wall cell blank in this mode.'
     )
+    st.caption(
+        'On Cost Calculation, Quantity is editable as a blank or non-negative number; '
+        'Total Amount is a controlled Price x Quantity formula.'
+    )
 
     st.subheader('2. Upload workbook')
     uploaded = st.file_uploader(
@@ -143,7 +147,8 @@ def main() -> None:
         type=['xlsx'],
         help='Upload one controlled .xlsx workbook, up to 10 MB. '
         'Macros and uncontrolled formulas are rejected. Exact controlled Cost and Price '
-        'formulas in previously processed workbooks are accepted.',
+        'formulas in previously processed workbooks are accepted. Exact controlled '
+        'Total Amount formulas in previously processed workbooks are also accepted.',
     )
 
     inspection = None
