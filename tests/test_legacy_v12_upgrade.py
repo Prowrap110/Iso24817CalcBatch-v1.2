@@ -11,11 +11,19 @@ from batch_schema import (
     LEGACY_OUTPUT_HEADERS,
     OUTPUT_HEADERS,
 )
+from cost_calculation import (
+    COST_TABLE_HEADERS,
+    cost_formula,
+    price_formula,
+    total_amount_formula,
+)
 from engine.corrosion_defects import ACTUAL_DEFECT_LENGTH
 from tests.helpers import (
+    _freeze_former_cost_contract,
     historical_v12_workbook_bytes_with_rows,
     legacy_workbook_bytes_with_rows,
     valid_row_values,
+    workbook_bytes_with_rows,
 )
 from workbook_processor import inspect_workbook, process_workbook
 
@@ -118,3 +126,50 @@ def test_historical_wide_v12_workbook_upgrades_without_legacy_normalization():
     assert main.cell(2, INPUT_HEADERS.index('Defect Length Basis') + 1).value == (
         'Independent defects'
     )
+
+
+@pytest.mark.parametrize('source_factory', [
+    lambda: historical_v12_workbook_bytes_with_rows(
+        [valid_row_values(**{'Defect Length Basis': 'Independent defects'})],
+        former_cost_contract=True,
+    ),
+    lambda: legacy_workbook_bytes_with_rows(
+        [valid_row_values()], sheet_count=7, former_cost_contract=True,
+    ),
+])
+def test_former_cost_contract_upgrades_only_recognized_historical_sources(source_factory):
+    """Catches rejecting a faithful pre-Quantity controlled Cost sheet."""
+    source = source_factory()
+    source_cost = _workbook_from_bytes(source)['Cost Calculation']
+
+    assert tuple(cell.value for cell in source_cost[5]) == (
+        COST_TABLE_HEADERS[:-2]
+    )
+    assert source_cost.tables['CostRows'].ref == 'A5:V6'
+    assert (source_cost['U6'].value, source_cost['V6'].value) == (
+        cost_formula(6), price_formula(6),
+    )
+
+    inspection = inspect_workbook(source)
+    assert inspection.workbook_errors == ()
+    rebuilt = _workbook_from_bytes(process_workbook(source, FIXED_TIME).workbook_bytes)
+    cost = rebuilt['Cost Calculation']
+
+    assert tuple(cell.value for cell in cost[5]) == COST_TABLE_HEADERS
+    assert cost['W6'].value is None
+    assert (cost['U6'].value, cost['V6'].value, cost['X6'].value) == (
+        cost_formula(6), price_formula(6), total_amount_formula(6),
+    )
+
+
+def test_current_compact_source_rejects_former_cost_contract():
+    """Catches broad acceptance of A:V Cost headers for current compact files."""
+    source = workbook_bytes_with_rows([valid_row_values()])
+    workbook = _workbook_from_bytes(source)
+    _freeze_former_cost_contract(workbook)
+
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'INVALID_COST_HEADERS',
+    ]

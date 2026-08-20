@@ -122,7 +122,9 @@ def workbook_bytes_with_rows(rows, *, detail_rows=(), commercial_inputs=None):
     return output.getvalue()
 
 
-def legacy_workbook_bytes_with_rows(rows, *, sheet_count=7):
+def legacy_workbook_bytes_with_rows(
+    rows, *, sheet_count=7, former_cost_contract=False,
+):
     """Create an exact controlled pre-v1.2 workbook in a supported layout."""
     from io import BytesIO
 
@@ -142,12 +144,14 @@ def legacy_workbook_bytes_with_rows(rows, *, sheet_count=7):
         LEGACY_INPUT_HEADERS + LEGACY_OUTPUT_HEADERS, start=1,
     ):
         main.cell(1, column).value = header
+    if former_cost_contract:
+        _freeze_former_cost_contract(workbook)
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
 
 
-def historical_v12_workbook_bytes_with_rows(rows):
+def historical_v12_workbook_bytes_with_rows(rows, *, former_cost_contract=False):
     """Create the former wide eight-sheet v1.2 contract for upgrade tests."""
     from io import BytesIO
 
@@ -161,6 +165,23 @@ def historical_v12_workbook_bytes_with_rows(rows):
         INPUT_HEADERS + HISTORICAL_V12_OUTPUT_HEADERS, start=1,
     ):
         main.cell(1, column).value = header
+    if former_cost_contract:
+        _freeze_former_cost_contract(workbook)
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def _freeze_former_cost_contract(workbook) -> None:
+    """Make a faithful processed Cost sheet from before Quantity existed."""
+    from cost_calculation import cost_formula, price_formula
+
+    cost = workbook['Cost Calculation']
+    cost.unmerge_cells('A1:X1')
+    cost.merge_cells('A1:V1')
+    cost.delete_cols(23, 2)
+    table = cost.tables['CostRows']
+    table.ref = 'A5:V6'
+    table.autoFilter.ref = table.ref
+    cost['U6'] = cost_formula(6)
+    cost['V6'] = price_formula(6)

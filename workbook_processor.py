@@ -553,7 +553,15 @@ def _validate_structure(
             ),)
     if 'Cost Calculation' in workbook.sheetnames:
         cost_headings = tuple(cell.value for cell in workbook['Cost Calculation'][5])
-        if cost_headings != COST_TABLE_HEADERS:
+        former_cost_headers = COST_SOURCE_HEADERS + ('Cost', 'Price')
+        accepts_former_cost_contract = (
+            cost_headings == former_cost_headers
+            and (
+                contract is _HISTORICAL_V12_CONTRACT
+                or contract.sheet_order == _LEGACY_COST_SHEETS
+            )
+        )
+        if cost_headings != COST_TABLE_HEADERS and not accepts_former_cost_contract:
             return None, (_issue(
                 'INVALID_COST_HEADERS',
                 'Cost Calculation headings do not match the controlled template.',

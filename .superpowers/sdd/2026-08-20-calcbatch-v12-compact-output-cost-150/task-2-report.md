@@ -56,3 +56,37 @@ The local terminal wrapper detached long processor-suite executions after its
 30-second output window, so the complete combined four-file command was not
 recorded as one final result. The focused Cost/Quantity/re-upload checks,
 affected existing processor checks, and full batch acceptance test are green.
+
+## Fix round 1 — former A:V Cost contract compatibility
+
+Reviewer reproduction showed that the former exact Cost header contract
+(`20 engineering fields`, `Cost`, `Price`) was rejected as
+`INVALID_COST_HEADERS` even when paired with a legitimate historical wide
+eight-sheet v1.2 source or a legitimate legacy seven-sheet-with-Cost source.
+
+Added faithful fixtures that freeze the old Cost shape: `A1:V1`, `A5:V6`, the
+former 22 headers, and exact previously generated U/V formulas. The initial
+regression run was RED as expected:
+
+```text
+python3 -m pytest -q tests/test_legacy_v12_upgrade.py::test_former_cost_contract_upgrades_only_recognized_historical_sources
+2 failed
+```
+
+Both failures were the expected `INVALID_COST_HEADERS` rejection.
+
+The minimal fix accepts only that exact former header tuple when the recognized
+upload contract is either the historical wide eight-sheet v1.2 contract or the
+legacy seven-sheet-with-Cost contract. Current compact sources remain strict
+A:X, and arbitrary headings still fail. Every accepted former contract rebuilds
+into the trusted A:X sheet with blank Quantity and regenerated U/V/X formulas.
+
+GREEN evidence:
+
+```text
+python3 -m pytest -q tests/test_legacy_v12_upgrade.py::test_former_cost_contract_upgrades_only_recognized_historical_sources tests/test_legacy_v12_upgrade.py::test_current_compact_source_rejects_former_cost_contract
+3 passed
+
+python3 -m pytest -q tests/test_workbook_processor.py::test_changed_cost_heading_is_a_workbook_error tests/test_workbook_processor.py::test_processed_cost_formulas_and_commercial_inputs_are_safe_to_reupload
+2 passed
+```
