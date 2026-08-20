@@ -566,6 +566,30 @@ def test_relocated_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     )
 
 
+def test_relationship_worksheet_with_nonworksheet_content_type_rejects_before_openpyxl(
+    monkeypatch,
+):
+    """Catches content-type relabeling hiding a relationship-reachable dense sheet."""
+    import workbook_processor
+
+    source = _relabeled_dense_worksheet_bytes(100_001)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached content-type-inconsistent worksheet')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
 def test_arbitrary_suffix_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     """Catches a valid worksheet content type using a non-XML part suffix."""
     import workbook_processor
@@ -1236,6 +1260,34 @@ def _relocated_dense_workbook_bytes(
         _dense_worksheet_xml(cell_count),
         new_path=new_path,
     )
+
+
+def _relabeled_dense_worksheet_bytes(cell_count: int) -> bytes:
+    """Keep a worksheet relationship but relabel its target as generic XML."""
+    worksheet_content_type = (
+        b'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
+    )
+    source = _dense_workbook_bytes(cell_count)
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '[Content_Types].xml':
+                target = (
+                    b'<Override PartName="/xl/worksheets/sheet5.xml" ContentType="'
+                    + worksheet_content_type
+                    + b'"/>'
+                )
+                replacement = (
+                    b'<Override PartName="/xl/worksheets/sheet5.xml" '
+                    b'ContentType="application/xml"/>'
+                )
+                assert target in content
+                content = content.replace(target, replacement)
+            output_zip.writestr(entry, content)
+    return output.getvalue()
 
 
 def _relocated_worksheet_workbook_bytes(

@@ -10,6 +10,7 @@ import json
 import logging
 import math
 from pathlib import Path, PurePosixPath
+import posixpath
 import traceback
 import zipfile
 from xml.etree.ElementTree import ParseError, iterparse
@@ -115,6 +116,14 @@ _SPREADSHEETML_MAIN_NAMESPACES = frozenset({
 _WORKSHEET_CONTENT_TYPE = (
     'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
 )
+_OFFICE_DOCUMENT_RELATIONSHIP_TYPES = frozenset({
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
+    'http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument',
+})
+_WORKSHEET_RELATIONSHIP_TYPES = frozenset({
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet',
+    'http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet',
+})
 
 logger = logging.getLogger(__name__)
 
@@ -1089,7 +1098,14 @@ def _zip_safety_errors(archive: zipfile.ZipFile) -> tuple[ValidationIssue, ...]:
             and entry.file_size / entry.compress_size > _MAX_ZIP_COMPRESSION_RATIO
         ):
             return (_issue('UNREADABLE_WORKBOOK', 'The uploaded workbook has a suspicious compression ratio.'),)
-    worksheet_parts = _worksheet_part_names(archive, entries)
+    worksheet_parts, declarations_are_consistent = _worksheet_part_names(
+        archive, entries,
+    )
+    if not declarations_are_consistent:
+        return (_issue(
+            'UNREADABLE_WORKBOOK',
+            'The uploaded workbook has inconsistent worksheet declarations.',
+        ),)
     worksheet_cells = 0
     for entry in entries:
         if (
@@ -1131,37 +1147,156 @@ def _zip_safety_errors(archive: zipfile.ZipFile) -> tuple[ValidationIssue, ...]:
 def _worksheet_part_names(
     archive: zipfile.ZipFile,
     entries: list[zipfile.ZipInfo],
-) -> frozenset[str]:
-    """Resolve worksheet ZIP parts from OPC content types, regardless of suffix."""
-    content_types_entry = archive.getinfo('[Content_Types].xml')
-    if content_types_entry.flag_bits & 0x1:
-        return frozenset()
+) -> tuple[frozenset[str], bool]:
+    """Resolve workbook sheet targets and verify their OPC content types."""
+    entry_names = {entry.filename for entry in entries}
+    declarations = _content_type_declarations(archive)
+    if declarations is None:
+        return frozenset(), False
+    overrides, defaults = declarations
 
-    override_parts: set[str] = set()
-    default_extensions: set[str] = set()
-    with archive.open(content_types_entry) as content_types_xml:
+    root_relationships = _relationship_records(archive, '_rels/.rels')
+    workbook_relationships = [
+        record for record in root_relationships.values()
+        if record[0] in _OFFICE_DOCUMENT_RELATIONSHIP_TYPES
+    ]
+    if len(workbook_relationships) != 1:
+        return frozenset(), False
+    _, workbook_target, workbook_target_mode = workbook_relationships[0]
+    workbook_part = _resolve_relationship_target('', workbook_target)
+    if workbook_target_mode or workbook_part not in entry_names:
+        return frozenset(), False
+
+    sheet_relationship_ids = _workbook_sheet_relationship_ids(
+        archive, workbook_part,
+    )
+    relationships_part = _relationships_part_name(workbook_part)
+    workbook_part_relationships = _relationship_records(
+        archive, relationships_part,
+    )
+    worksheet_parts: set[str] = set()
+    for relationship_id in sheet_relationship_ids:
+        record = workbook_part_relationships.get(relationship_id)
+        if record is None:
+            return frozenset(), False
+        relationship_type, target, target_mode = record
+        target_part = _resolve_relationship_target(workbook_part, target)
+        if (
+            target_mode
+            or relationship_type not in _WORKSHEET_RELATIONSHIP_TYPES
+            or target_part not in entry_names
+            or _effective_content_type(target_part, overrides, defaults)
+            != _WORKSHEET_CONTENT_TYPE
+        ):
+            return frozenset(), False
+        worksheet_parts.add(target_part)
+    return frozenset(worksheet_parts), True
+
+
+def _content_type_declarations(
+    archive: zipfile.ZipFile,
+) -> tuple[dict[str, str], dict[str, str]] | None:
+    entry = archive.getinfo('[Content_Types].xml')
+    if entry.flag_bits & 0x1:
+        return None
+    overrides: dict[str, str] = {}
+    defaults: dict[str, str] = {}
+    with archive.open(entry) as content_types_xml:
         for _, element in iterparse(content_types_xml, events=('end',)):
             _, local_name = _xml_expanded_name(element.tag)
-            if element.attrib.get('ContentType') == _WORKSHEET_CONTENT_TYPE:
-                if local_name == 'Override':
-                    part_name = element.attrib.get('PartName', '').lstrip('/')
-                    if part_name:
-                        override_parts.add(part_name)
-                elif local_name == 'Default':
-                    extension = element.attrib.get('Extension', '').lower()
-                    if extension:
-                        default_extensions.add(extension)
+            content_type = element.attrib.get('ContentType')
+            if local_name == 'Override':
+                part_name = element.attrib.get('PartName', '').lstrip('/')
+                if not part_name or not content_type:
+                    return None
+                if part_name in overrides and overrides[part_name] != content_type:
+                    return None
+                overrides[part_name] = content_type
+            elif local_name == 'Default':
+                extension = element.attrib.get('Extension', '').lower()
+                if not extension or not content_type:
+                    return None
+                if extension in defaults and defaults[extension] != content_type:
+                    return None
+                defaults[extension] = content_type
             element.clear()
+    return overrides, defaults
 
-    return frozenset(
-        entry.filename
-        for entry in entries
-        if (
-            entry.filename in override_parts
-            or PurePosixPath(entry.filename).suffix.lstrip('.').lower()
-            in default_extensions
-        )
-    )
+
+def _relationship_records(
+    archive: zipfile.ZipFile,
+    part_name: str,
+) -> dict[str, tuple[str, str, str]]:
+    entry = archive.getinfo(part_name)
+    if entry.flag_bits & 0x1:
+        return {}
+    records: dict[str, tuple[str, str, str]] = {}
+    with archive.open(entry) as relationships_xml:
+        for _, element in iterparse(relationships_xml, events=('end',)):
+            _, local_name = _xml_expanded_name(element.tag)
+            if local_name == 'Relationship':
+                relationship_id = element.attrib.get('Id', '')
+                relationship_type = element.attrib.get('Type', '')
+                target = element.attrib.get('Target', '')
+                target_mode = element.attrib.get('TargetMode', '')
+                if relationship_id and relationship_type and target:
+                    records[relationship_id] = (
+                        relationship_type, target, target_mode,
+                    )
+            element.clear()
+    return records
+
+
+def _workbook_sheet_relationship_ids(
+    archive: zipfile.ZipFile,
+    workbook_part: str,
+) -> tuple[str, ...]:
+    entry = archive.getinfo(workbook_part)
+    if entry.flag_bits & 0x1:
+        return ()
+    relationship_ids: list[str] = []
+    with archive.open(entry) as workbook_xml:
+        for _, element in iterparse(workbook_xml, events=('end',)):
+            _, local_name = _xml_expanded_name(element.tag)
+            if local_name == 'sheet':
+                relationship_id = next((
+                    value for attribute, value in element.attrib.items()
+                    if _xml_expanded_name(attribute)[1] == 'id'
+                ), '')
+                if relationship_id:
+                    relationship_ids.append(relationship_id)
+            element.clear()
+    return tuple(relationship_ids)
+
+
+def _relationships_part_name(source_part: str) -> str:
+    source = PurePosixPath(source_part)
+    return str(source.parent / '_rels' / f'{source.name}.rels')
+
+
+def _resolve_relationship_target(
+    source_part: str,
+    target: str,
+) -> str:
+    if target.startswith('/'):
+        unresolved = target.lstrip('/')
+    else:
+        unresolved = posixpath.join(posixpath.dirname(source_part), target)
+    resolved = posixpath.normpath(unresolved)
+    if resolved in {'', '.', '..'} or resolved.startswith('../'):
+        return ''
+    return resolved
+
+
+def _effective_content_type(
+    part_name: str,
+    overrides: dict[str, str],
+    defaults: dict[str, str],
+) -> str | None:
+    if part_name in overrides:
+        return overrides[part_name]
+    extension = PurePosixPath(part_name).suffix.lstrip('.').lower()
+    return defaults.get(extension)
 
 
 def _xml_expanded_name(tag: object) -> tuple[str, str]:
