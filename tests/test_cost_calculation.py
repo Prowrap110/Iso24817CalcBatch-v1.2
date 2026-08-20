@@ -1,3 +1,5 @@
+import cost_calculation
+
 from cost_calculation import (
     COST_FIRST_DATA_ROW,
     COST_LAST_DATA_ROW,
@@ -21,7 +23,9 @@ def test_cost_source_headers_survive_inserted_v12_columns():
         'Procurement Axial Length [mm]', 'Fabric Area [m2]',
         'Epoxy Mass [kg]',
     )
-    assert COST_TABLE_HEADERS == COST_SOURCE_HEADERS + ('Cost', 'Price')
+    assert COST_TABLE_HEADERS == COST_SOURCE_HEADERS + (
+        'Cost', 'Price', 'Quantity', 'Total Amount',
+    )
 
 
 def test_cost_formulas_use_absolute_inputs_and_relative_rows():
@@ -31,6 +35,10 @@ def test_cost_formulas_use_absolute_inputs_and_relative_rows():
     )
     assert price_formula(COST_FIRST_DATA_ROW) == (
         '=IF(OR(U6="",$H$3=""),"",U6*$H$3)'
+    )
+    assert hasattr(cost_calculation, 'total_amount_formula')
+    assert cost_calculation.total_amount_formula(COST_FIRST_DATA_ROW) == (
+        '=IF(OR(V6="",W6=""),"",V6*W6)'
     )
 
 
@@ -44,6 +52,10 @@ class _FormulaCell:
 def test_only_exact_controlled_cost_formulas_are_allowed():
     assert is_allowed_cost_formula(_FormulaCell(6, 21, cost_formula(6))) is True
     assert is_allowed_cost_formula(_FormulaCell(6, 22, price_formula(6))) is True
+    assert is_allowed_cost_formula(
+        _FormulaCell(6, 24, cost_calculation.total_amount_formula(6)),
+    ) is True
+    assert is_allowed_cost_formula(_FormulaCell(6, 23, '=1+1')) is False
     assert is_allowed_cost_formula(_FormulaCell(6, 21, '=1+1')) is False
     assert is_allowed_cost_formula(_FormulaCell(5, 21, cost_formula(5))) is False
     assert is_allowed_cost_formula(

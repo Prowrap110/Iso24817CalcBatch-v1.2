@@ -61,9 +61,16 @@ def test_template_has_blank_editable_cost_sheet_in_new_controlled_order():
         cost[address].protection.locked is False
         for address in ('B3', 'E3', 'H3')
     )
-    assert [cost.cell(5, column).value for column in range(1, 23)][-2:] == [
-        'Cost', 'Price',
+    assert [cost.cell(5, column).value for column in range(1, 25)][-4:] == [
+        'Cost', 'Price', 'Quantity', 'Total Amount',
     ]
+    assert cost['W6'].protection.locked is False
+    assert cost['X6'].protection.locked is True
+    assert cost['W6'].fill.fgColor.rgb == '00FFF2CC'
+    assert any(
+        validation.type == 'decimal' and str(validation.sqref) == 'W6:W505'
+        for validation in cost.data_validations.dataValidation
+    )
     assert cost.freeze_panes == 'A6'
     assert cost.protection.sheet is True
     assert cost.protection.selectUnlockedCells is False
@@ -78,9 +85,9 @@ def test_template_visibly_highlights_cost_assumption_value_cells():
     assert [cell.fill.fgColor.rgb for cell in inputs] == ['00FFF2CC'] * 3
     assert [cell.number_format for cell in inputs] == ['#,##0.00'] * 3
     assert [cell.protection.locked for cell in inputs] == [False] * 3
-    assert [str(validation.sqref) for validation in cost.data_validations.dataValidation] == [
-        'B3 E3 H3',
-    ]
+    assert {str(validation.sqref) for validation in cost.data_validations.dataValidation} == {
+        'B3 E3 H3', 'W6:W505',
+    }
 
 
 def test_cost_quantity_columns_use_integer_display_without_populating_template_rows():

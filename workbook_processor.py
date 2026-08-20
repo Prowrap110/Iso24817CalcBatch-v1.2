@@ -57,11 +57,13 @@ from batch_validation import (
 from cost_calculation import (
     COST_FIRST_DATA_ROW,
     COST_INPUTS,
+    COST_LAST_DATA_ROW,
     COST_SOURCE_HEADERS,
     COST_TABLE_HEADERS,
     cost_formula,
     is_allowed_cost_formula,
     price_formula,
+    total_amount_formula,
 )
 from workbook_template import create_template_workbook
 from warning_catalog import format_affected_rows, warning_meaning
@@ -241,6 +243,11 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     if commercial_input_errors:
         return _empty_inspection(
             commercial_input_errors, header_summary, detail_header_summary,
+        )
+    quantity_errors = _quantity_errors(workbook)
+    if quantity_errors:
+        return _empty_inspection(
+            quantity_errors, header_summary, detail_header_summary,
         )
 
     batch_info, batch_issues = validate_batch_info(common_values)
@@ -624,6 +631,29 @@ def _commercial_input_errors(workbook) -> tuple[ValidationIssue, ...]:
     return ()
 
 
+def _quantity_errors(workbook) -> tuple[ValidationIssue, ...]:
+    """Reject untrusted Quantity values outside the controlled input contract."""
+    if 'Cost Calculation' not in workbook.sheetnames:
+        return ()
+    worksheet = workbook['Cost Calculation']
+    for _, cell in _loaded_cells(worksheet):
+        if cell.column != 23 or cell.row < COST_FIRST_DATA_ROW or _is_blank(cell.value):
+            continue
+        value = cell.value
+        if (
+            cell.row > COST_LAST_DATA_ROW
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            return (_issue(
+                'INVALID_QUANTITY',
+                f'Quantity must be blank or a non-negative number: {cell.coordinate}.',
+            ),)
+    return ()
+
+
 def _populated_rows(
     worksheet,
     input_headers: tuple[str, ...] = INPUT_HEADERS,
@@ -939,13 +969,14 @@ def _write_cost_sheet(workbook) -> None:
             cell.border = Border(bottom=source['A2'].border.bottom)
         cost.cell(output_row, 21).value = cost_formula(output_row)
         cost.cell(output_row, 22).value = price_formula(output_row)
-        for column in (21, 22):
+        cost.cell(output_row, 24).value = total_amount_formula(output_row)
+        for column in (21, 22, 24):
             cell = cost.cell(output_row, column)
             cell.alignment = Alignment(vertical='top')
             cell.border = Border(bottom=source['A2'].border.bottom)
             cell.number_format = '#,##0.00'
     table = cost.tables['CostRows']
-    table.ref = f'A5:V{max(COST_FIRST_DATA_ROW, 5 + len(populated))}'
+    table.ref = f'A5:X{max(COST_FIRST_DATA_ROW, 5 + len(populated))}'
     table.autoFilter.ref = table.ref
 
 
@@ -1464,6 +1495,12 @@ def _copy_controlled_inputs(
         for address, _ in COST_INPUTS:
             source_value = source_cost[address].value
             output_cost[address].value = None if _is_blank(source_value) else source_value
+        populated_rows = _populated_rows(source_data, contract.input_headers)
+        for cost_row, _ in enumerate(populated_rows, start=COST_FIRST_DATA_ROW):
+            quantity = source_cost.cell(cost_row, 23).value
+            output_cost.cell(cost_row, 23).value = (
+                None if _is_blank(quantity) else quantity
+            )
 
 
 def _sanitized_source_name(source_name: str | None) -> str:

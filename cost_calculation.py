@@ -33,7 +33,7 @@ COST_SOURCE_HEADERS = (
     'Fabric Area [m2]',
     'Epoxy Mass [kg]',
 )
-COST_TABLE_HEADERS = COST_SOURCE_HEADERS + ('Cost', 'Price')
+COST_TABLE_HEADERS = COST_SOURCE_HEADERS + ('Cost', 'Price', 'Quantity', 'Total Amount')
 
 COST_TABLE_HEADER_ROW = 5
 COST_FIRST_DATA_ROW = 6
@@ -53,6 +53,11 @@ def price_formula(row: int) -> str:
     return f'=IF(OR(U{row}="",$H$3=""),"",U{row}*$H$3)'
 
 
+def total_amount_formula(row: int) -> str:
+    """Return the exact controlled quantity-based total formula for ``row``."""
+    return f'=IF(OR(V{row}="",W{row}=""),"",V{row}*W{row})'
+
+
 def is_allowed_cost_formula(cell) -> bool:
     """Return whether ``cell`` contains an exact app-generated cost formula."""
     if not (COST_FIRST_DATA_ROW <= cell.row <= COST_LAST_DATA_ROW):
@@ -61,4 +66,6 @@ def is_allowed_cost_formula(cell) -> bool:
         return cell.value == cost_formula(cell.row)
     if cell.column == 22:
         return cell.value == price_formula(cell.row)
+    if cell.column == 24:
+        return cell.value == total_amount_formula(cell.row)
     return False

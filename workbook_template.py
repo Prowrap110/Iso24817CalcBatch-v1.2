@@ -1,6 +1,7 @@
 """Generate the controlled, formula-free PROWRAP batch input workbook."""
 
 from io import BytesIO
+from copy import copy
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -20,7 +21,12 @@ from batch_schema import (
     MAX_ROWS,
     OUTPUT_HEADERS,
 )
-from cost_calculation import COST_INPUTS, COST_TABLE_HEADERS
+from cost_calculation import (
+    COST_FIRST_DATA_ROW,
+    COST_INPUTS,
+    COST_LAST_DATA_ROW,
+    COST_TABLE_HEADERS,
+)
 from engine.corrosion_defects import DEFECT_LENGTH_BASES
 from workbook_formatting import (
     HEADER_HEIGHT,
@@ -271,22 +277,36 @@ def _build_cost_calculation(worksheet) -> None:
         validation.add(address)
     worksheet.add_data_validation(validation)
 
+    quantity_validation = DataValidation(
+        type='decimal', operator='greaterThanOrEqual', formula1='0',
+        allow_blank=True, errorTitle='Enter zero or a positive quantity',
+        error='Enter a numeric quantity greater than or equal to zero, or leave this cell blank.',
+        showErrorMessage=True, errorStyle='stop',
+    )
+    quantity_validation.add(f'W{COST_FIRST_DATA_ROW}:W{COST_LAST_DATA_ROW}')
+    worksheet.add_data_validation(quantity_validation)
+
     for column, header in enumerate(COST_TABLE_HEADERS, start=1):
         apply_header_style(worksheet.cell(5, column, header), OUTPUT_HEADER_COLOR)
     worksheet.row_dimensions[5].height = HEADER_HEIGHT
 
-    table = Table(displayName='CostRows', ref='A5:V6')
+    table = Table(displayName='CostRows', ref='A5:X6')
     table.tableStyleInfo = TableStyleInfo(
         name='TableStyleMedium2', showFirstColumn=False, showLastColumn=False,
         showRowStripes=True, showColumnStripes=False,
     )
     worksheet.add_table(table)
 
-    for row in range(6, MAX_ROWS + 6):
+    for row in range(COST_FIRST_DATA_ROW, COST_LAST_DATA_ROW + 1):
         for column in range(1, len(COST_TABLE_HEADERS) + 1):
             worksheet.cell(row, column).number_format = '#,##0.00'
         for column in (10, 15, 17):
             worksheet.cell(row, column).number_format = '#,##0'
+        quantity_cell = worksheet.cell(row, 23)
+        quantity_cell.fill = PatternFill(fill_type='solid', fgColor=_COST_INPUT_COLOR)
+        quantity_protection = copy(quantity_cell.protection)
+        quantity_protection.locked = False
+        quantity_cell.protection = quantity_protection
 
     worksheet.freeze_panes = 'A6'
     worksheet.sheet_view.showGridLines = False
@@ -295,7 +315,7 @@ def _build_cost_calculation(worksheet) -> None:
     worksheet.protection.selectLockedCells = False
     worksheet.protection.selectUnlockedCells = False
     set_capped_column_widths(worksheet)
-    worksheet.merge_cells('A1:V1')
+    worksheet.merge_cells('A1:X1')
 
 
 def _build_warnings(worksheet) -> None:

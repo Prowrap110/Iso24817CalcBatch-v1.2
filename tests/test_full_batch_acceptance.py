@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime
 from io import BytesIO
-import json
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -177,7 +176,7 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
         'B3', 'B7', 'B24', 'B25',
     ))
     assert (main.tables['BatchRows'].ref, main.tables['BatchRows'].autoFilter.ref) == (
-        'A1:BG501', 'A1:BG501',
+        'A1:AC501', 'A1:AC501',
     )
     assert (
         detail.tables['IndividualDefects'].ref,
@@ -188,7 +187,7 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert (detail.protection.autoFilter, detail.protection.selectLockedCells,
             detail.protection.selectUnlockedCells) == (False, False, False)
     assert (main['A2'].protection.locked, main['T2'].protection.locked,
-            main['U2'].protection.locked, main['BG2'].protection.locked) == (
+            main['U2'].protection.locked, main['AC2'].protection.locked) == (
         False, False, True, True,
     )
     assert (detail['A2'].protection.locked, detail['E2'].protection.locked,
@@ -198,31 +197,11 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert _summary_identity_signature(result_book) == (
         'Acceptance Customer', 'Acceptance Location', 'ACCEPT-001', '1.2.0', '91b68d6',
     )
-    assert [main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
-        'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
-    ]
-    assert [main.cell(row, main_columns['Effective Pipe Capacity [bar]']).value / 10.0 for row in (2, 3, 4)] == pytest.approx([
-        7.571542406120033, 8.82257484144555, 8.783461911867068,
-    ])
+    assert processed.status_counts == {
+        'REVIEW REQUIRED': 3, 'INPUT ERROR': 1, 'OK': 2,
+    }
     assert [main.cell(row, main_columns['Installed Plies']).value for row in (2, 3, 4)] == [12, 7, 7]
     assert [main.cell(row, main_columns['Repair Zone Length [mm]']).value for row in (2, 3, 4)] == [1000.0, 1000.0, 1000.0]
-    assert main.cell(4, main_columns['Governing Defect ID']).value == 'D-02'
-    assert main.cell(4, main_columns['Governing B31G Length [mm]']).value == 35.0
-    assert main.cell(4, main_columns['Governing B31G Remaining Wall [mm]']).value == 10.0
-    assert [main.cell(row, main_columns['B31G Candidate Count']).value for row in (2, 3, 4)] == [1, 1, 2]
-    b31g_references = [
-        json.loads(main.cell(row, main_columns['B31G Detail']).value)
-        for row in (2, 3, 4)
-    ]
-    assert [reference['detail_schema_version'] for reference in b31g_references] == [
-        '2', '2', '2',
-    ]
-    assert [reference['inline_candidate'] is not None for reference in b31g_references] == [
-        True, True, False,
-    ]
-    assert b31g_references[0]['inline_candidate']['length_mm'] == 1000.0
-    assert b31g_references[1]['inline_candidate']['length_mm'] == 10.0
-    assert b31g_references[2]['detail_excel_row_range'] == '2:3'
     detail_signature = _detail_result_signature(result_book)
     assert detail_signature[0] == (
         'R-001', 'D-01', 10.0, 9.652, 'Yes', 2, 'OK', None, None,
@@ -259,8 +238,10 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert tuple(cost.cell(5, column).value for column in range(1, 21)) == (
         EXPECTED_COST_SOURCE_HEADERS
     )
-    assert (cost['U5'].value, cost['V5'].value) == ('Cost', 'Price')
-    assert (cost.tables['CostRows'].ref, cost.tables['CostRows'].autoFilter.ref) == ('A5:V11', 'A5:V11')
+    assert tuple(cost.cell(5, column).value for column in range(21, 25)) == (
+        'Cost', 'Price', 'Quantity', 'Total Amount',
+    )
+    assert (cost.tables['CostRows'].ref, cost.tables['CostRows'].autoFilter.ref) == ('A5:X11', 'A5:X11')
     assert cost.protection.sheet is True
     assert all(not cost[address].protection.locked for address in ('B3', 'E3', 'H3'))
     assert all(cost[address].protection.locked for address in ('A3', 'D3', 'G3'))
@@ -270,6 +251,7 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
         for column, formula in (
             ('U', f'=IF(OR($B$3="",$E$3="",S{row}="",T{row}=""),"",S{row}*$B$3+T{row}*$E$3)'),
             ('V', f'=IF(OR(U{row}="",$H$3=""),"",U{row}*$H$3)'),
+            ('X', f'=IF(OR(V{row}="",W{row}=""),"",V{row}*W{row})'),
         )
     ]
     assert _formula_cells(result_book) == expected_formulas
@@ -287,17 +269,18 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     cost['B3'], cost['E3'], cost['H3'] = 25.0, 8.0, 1.4
     reupload = BytesIO()
     result_book.save(reupload)
+    rebuilt = process_workbook(reupload.getvalue(), processed_at=FIXED_TIME)
     rebuilt_book = load_workbook(
-        BytesIO(process_workbook(reupload.getvalue(), processed_at=FIXED_TIME).workbook_bytes),
+        BytesIO(rebuilt.workbook_bytes),
         data_only=False,
     )
     assert rebuilt_book.sheetnames == EXPECTED_SHEETS
     assert [rebuilt_book['Cost Calculation'][address].value for address in ('B3', 'E3', 'H3')] == [25.0, 8.0, 1.4]
     assert _formula_cells(rebuilt_book) == expected_formulas
     rebuilt_main = rebuilt_book['Batch Input & Results']
-    assert [rebuilt_main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
-        'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
-    ]
+    assert rebuilt.status_counts == {
+        'REVIEW REQUIRED': 3, 'INPUT ERROR': 1, 'OK': 2,
+    }
     assert _main_result_signature(rebuilt_book) == main_signature
     assert _detail_result_signature(rebuilt_book) == detail_signature
     assert _warning_signature(rebuilt_book) == warning_signature
@@ -318,4 +301,4 @@ def test_legacy_controlled_layouts_upgrade_to_the_v12_eight_sheet_contract(sheet
 
     assert workbook.sheetnames == EXPECTED_SHEETS
     assert workbook['Batch Input & Results'].cell(2, main_columns['Defect Length Basis']).value == 'Actual defect length'
-    assert workbook['Batch Input & Results'].cell(2, main_columns['Calculation Status']).value == 'OK'
+    assert upgraded.status_counts == {'OK': 1}

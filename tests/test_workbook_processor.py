@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
 from io import BytesIO
+import math
 import zipfile
 
 import pytest
+import cost_calculation
 from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
@@ -33,6 +35,7 @@ from tests.helpers import (
 from workbook_processor import (
     WorkbookProcessingError,
     _commercial_input_errors,
+    _quantity_errors,
     inspect_workbook,
     process_workbook,
 )
@@ -976,6 +979,69 @@ def test_processed_cost_formulas_and_commercial_inputs_are_safe_to_reupload():
     ]
 
 
+@pytest.mark.parametrize(('value', 'expected_code'), [
+    (None, None),
+    (' \t ', None),
+    (0, None),
+    (2.5, None),
+    (-0.01, 'INVALID_QUANTITY'),
+    (True, 'INVALID_QUANTITY'),
+    ('two', 'INVALID_QUANTITY'),
+    (float('nan'), 'INVALID_QUANTITY'),
+    (float('inf'), 'INVALID_QUANTITY'),
+    ('=1+1', 'FORMULA_NOT_ALLOWED'),
+])
+def test_cost_quantity_accepts_only_blank_or_finite_non_negative_numbers(value, expected_code):
+    """Catches untrusted quantity inputs reaching the rebuilt commercial output."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['W6'] = value
+
+    if isinstance(value, float) and not math.isfinite(value):
+        issues = _quantity_errors(workbook)
+        assert [issue.code for issue in issues] == [expected_code]
+    else:
+        inspection = inspect_workbook(_saved(workbook))
+        if expected_code is None:
+            assert inspection.workbook_errors == ()
+        else:
+            assert [issue.code for issue in inspection.workbook_errors] == [expected_code]
+
+
+def test_processed_cost_quantity_is_preserved_by_compact_cost_row_position():
+    """Catches a re-upload dropping valid Quantity values or trusting engineering cells."""
+    first = process_workbook(
+        workbook_bytes_with_rows([
+            valid_row_values(),
+            valid_row_values(**{'Pipe OD [mm]': 508.0}),
+        ]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(first.workbook_bytes)
+    cost = workbook['Cost Calculation']
+    cost['W6'], cost['W7'] = 0, 2.5
+    cost['A6'] = 999999.0
+
+    second = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    rebuilt = _workbook(second.workbook_bytes)['Cost Calculation']
+
+    assert [rebuilt[address].value for address in ('W6', 'W7')] == [0, 2.5]
+    assert rebuilt['X6'].value == cost_calculation.total_amount_formula(6)
+    assert rebuilt['X7'].value == cost_calculation.total_amount_formula(7)
+    assert rebuilt['A6'].value == 457.2
+
+
+def test_whitespace_only_cost_quantity_rebuilds_as_a_true_blank():
+    """Catches a visual blank Quantity becoming a text value in the trusted output."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['W6'] = ' \t '
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    rebuilt = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert rebuilt['W6'].value is None
+    assert rebuilt['X6'].value == cost_calculation.total_amount_formula(6)
+
+
 def test_whitespace_only_commercial_input_is_rebuilt_as_a_true_blank():
     """Catches whitespace bypassing blank validation and breaking Excel IF checks."""
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
@@ -1234,7 +1300,8 @@ def test_processed_cost_sheet_maps_requested_values_and_formulas():
     ]
     assert cost['U6'].value == cost_formula(6)
     assert cost['V6'].value == price_formula(6)
-    assert cost.tables['CostRows'].ref == 'A5:V6'
+    assert cost['X6'].value == cost_calculation.total_amount_formula(6)
+    assert cost.tables['CostRows'].ref == 'A5:X6'
 
 
 def test_uploaded_cost_table_values_are_never_trusted():
@@ -1276,7 +1343,7 @@ def test_processed_cost_sheet_uses_one_compact_row_per_populated_defect():
         457.2, 610.0, None,
     ]
     assert cost['U7'].value == cost_formula(7)
-    assert cost.tables['CostRows'].ref == 'A5:V7'
+    assert cost.tables['CostRows'].ref == 'A5:X7'
 
 
 def test_processed_cost_table_filter_covers_every_compact_row():
@@ -1291,7 +1358,7 @@ def test_processed_cost_table_filter_covers_every_compact_row():
     )
     table = _workbook(result.workbook_bytes)['Cost Calculation'].tables['CostRows']
 
-    assert table.ref == 'A5:V8'
+    assert table.ref == 'A5:X8'
     assert table.autoFilter.ref == table.ref
 
 
@@ -1310,8 +1377,8 @@ def test_cleared_processed_defect_ignores_stale_exact_cost_formulas():
     cost = _workbook(second.workbook_bytes)['Cost Calculation']
 
     assert second.populated_rows == 0
-    assert [cost.cell(6, column).value for column in range(1, 23)] == [None] * 22
-    assert cost.tables['CostRows'].ref == 'A5:V6'
+    assert [cost.cell(6, column).value for column in range(1, 25)] == [None] * 24
+    assert cost.tables['CostRows'].ref == 'A5:X6'
 
 
 def test_processed_workbook_requests_full_automatic_recalculation():
