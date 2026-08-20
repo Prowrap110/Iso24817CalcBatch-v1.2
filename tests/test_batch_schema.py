@@ -1,4 +1,5 @@
 from batch_schema import (
+    B31G_DETAIL_SCHEMA_VERSION,
     BatchInfo,
     DETAIL_OUTPUT_HEADERS,
     INPUT_HEADERS,
@@ -75,3 +76,4 @@ def test_detail_outputs_hold_the_complete_scalar_b31g_candidate_audit():
         'Governing Defect',
         'Assessment Warning Codes',
     )
+    assert B31G_DETAIL_SCHEMA_VERSION == '2'

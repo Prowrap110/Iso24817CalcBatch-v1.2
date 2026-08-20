@@ -162,3 +162,27 @@ acceptance set passed `106` tests. The final full suite passed `289` tests in
 generator and processor at the fixed UTC time without another artifact-marker
 run. Their eight-sheet structure, formulas, protection, direct-engine values,
 re-upload behavior, and all-sheet render check were repeated successfully.
+
+### Code-only schema-v2 candidate-audit follow-up
+
+The artifact hashes, renders, and schema-v1 JSON lengths above remain the exact
+evidence for commit `c071119`; they were intentionally not regenerated for this
+subsequent code-only review correction. The current source contract advances
+`B31G Detail` to discriminated schema version `2`:
+
+- Manual repairs remain normalized to their `Individual Defects` row range and
+  carry `inline_candidate: null`, including the compact 2,000-row case.
+- Actual and Independent repairs, which have no detail rows, carry exactly one
+  bounded `inline_candidate` object with the complete scalar B31G audit plus
+  defect ID, length, and remaining wall.
+- The JSON remains deterministic and contains no candidate array. Legacy
+  Actual upgrades and processed-workbook re-uploads preserve the mode-correct
+  trace.
+
+The initial complete run reported `291 passed, 2 failed`; both failures were
+Streamlit AppTest startups exceeding its fixed three-second default under
+sustained suite load. The exact tests passed unchanged in isolation, so only
+those two startup/upload reruns were aligned with the existing proportionate
+10-second AppTest convention. No production optimization was made. The app
+smoke file then passed `11` tests, and the fresh persistent full suite passed
+`293` tests in `528.57 s`.

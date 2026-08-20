@@ -15,6 +15,7 @@ from batch_status import CalculationStatus, classify_result
 from engine.corrosion_defects import (
     ACTUAL_DEFECT_LENGTH,
     ENTER_MANUALLY,
+    INDEPENDENT_DEFECTS,
     IndividualCorrosionDefect,
 )
 from engine.prowrap_calculations import (
@@ -30,6 +31,8 @@ from warning_catalog import warning_codes
 @dataclass(frozen=True)
 class CandidateCalculation:
     defect_id: str
+    length_mm: float
+    remaining_wall_mm: float
     method: str
     d_over_t: float
     length_parameter_z: float
@@ -147,10 +150,12 @@ def calculate_row(
     )
     warnings = tuple(result['compliance_warnings']) + extra_warnings
     status = classify_result(result, extra_warnings)
+    candidate_calculations = _candidate_calculations(result)
     outputs = _map_outputs(
         result,
         warning_codes(warnings),
         _should_run_type_a_check(values, result),
+        candidate_calculations,
     )
     if status is CalculationStatus.NOT_REPAIRABLE:
         for heading in _INSTALLABLE_OUTPUTS:
@@ -160,7 +165,7 @@ def calculate_row(
         source_excel_row=row.source_excel_row,
         status=status,
         outputs=outputs,
-        candidate_calculations=_candidate_calculations(result),
+        candidate_calculations=candidate_calculations,
     )
 
 
@@ -189,6 +194,8 @@ def _candidate_calculations(result: dict[str, Any]) -> tuple[CandidateCalculatio
         )
         calculations.append(CandidateCalculation(
             defect_id=item['defect_id'],
+            length_mm=item['length_mm'],
+            remaining_wall_mm=item['remaining_wall_mm'],
             method=assessment['method'],
             d_over_t=assessment['d_over_t'],
             length_parameter_z=assessment['z'],
@@ -246,7 +253,10 @@ def _cloth_width_warnings(cloth_width_mm: float) -> tuple[str, ...]:
 
 
 def _map_outputs(
-    result: dict[str, Any], warnings: tuple[str, ...], type_a_check_run: bool,
+    result: dict[str, Any],
+    warnings: tuple[str, ...],
+    type_a_check_run: bool,
+    candidate_calculations: tuple[CandidateCalculation, ...],
 ) -> dict[str, object]:
     b31g = result['b31g_details']
     type_a_detail = None
@@ -289,6 +299,9 @@ def _map_outputs(
             'detail_schema': B31G_DETAIL_SCHEMA,
             'detail_schema_version': B31G_DETAIL_SCHEMA_VERSION,
             'governing_defect_id': result['governing_defect_id'],
+            'inline_candidate': _inline_candidate_audit(
+                result, candidate_calculations,
+            ),
         },
         'Type A Detail': type_a_detail,
         'Type B Detail': result['type_b_details'],
@@ -300,4 +313,38 @@ def _map_outputs(
         'Governing B31G Remaining Wall [mm]': (
             result['governing_b31g_remaining_wall_mm']
         ),
+    }
+
+
+def _inline_candidate_audit(
+    result: dict[str, Any],
+    candidates: tuple[CandidateCalculation, ...],
+) -> dict[str, object] | None:
+    """Inline the sole non-Manual candidate; Manual audits stay normalized."""
+    if (
+        result['defect_length_basis']
+        not in {ACTUAL_DEFECT_LENGTH, INDEPENDENT_DEFECTS}
+        or len(candidates) != 1
+    ):
+        return None
+    candidate = candidates[0]
+    return {
+        'defect_id': candidate.defect_id,
+        'length_mm': candidate.length_mm,
+        'remaining_wall_mm': candidate.remaining_wall_mm,
+        'method': candidate.method,
+        'd_over_t': candidate.d_over_t,
+        'length_parameter_z': candidate.length_parameter_z,
+        'folias_factor': candidate.folias_factor,
+        'flow_stress_mpa': candidate.flow_stress_mpa,
+        'failure_stress_mpa': candidate.failure_stress_mpa,
+        'failure_pressure_bar': candidate.failure_pressure_bar,
+        'safe_pressure_bar': candidate.safe_pressure_bar,
+        'safety_factor': candidate.safety_factor,
+        'operating_hoop_stress_mpa': candidate.operating_hoop_stress_mpa,
+        'applicable': candidate.applicable,
+        'acceptable': candidate.acceptable,
+        'credited_safe_pressure_bar': candidate.credited_safe_pressure_bar,
+        'governing': candidate.governing,
+        'warning_codes': ', '.join(candidate.warning_codes),
     }

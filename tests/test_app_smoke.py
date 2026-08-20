@@ -189,11 +189,11 @@ def test_app_previews_linked_manual_counts_and_explains_linkage():
             detail_values(group='R-001', defect='D-02', length=35, wall=4.6),
         ],
     )
-    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()
+    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run(timeout=10)
     app.file_uploader[0].upload(
         'linked.xlsx', source,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ).run()
+    ).run(timeout=10)
 
     rendered = '\n'.join(markdown.value for markdown in app.markdown)
     captions = '\n'.join(caption.value for caption in app.caption)
@@ -209,11 +209,11 @@ def test_app_previews_linked_manual_counts_and_explains_linkage():
 
 def test_processed_v12_download_uses_v12_results_filename():
     """The v1.2 result must never look like an older CalcBatch download."""
-    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run()
+    app = AppTest.from_file(Path(__file__).parents[1] / 'app.py').run(timeout=10)
     app.file_uploader[0].upload(
         'batch.xlsx', workbook_bytes_with_rows([valid_row_values()]),
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ).run()
+    ).run(timeout=10)
     next(button for button in app.button if button.label == 'Calculate Batch').click().run(timeout=10)
 
     assert any(

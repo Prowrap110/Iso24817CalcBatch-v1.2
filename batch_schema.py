@@ -128,7 +128,7 @@ DETAIL_OUTPUT_HEADERS = (
 )
 
 B31G_DETAIL_SCHEMA = 'Individual Defects'
-B31G_DETAIL_SCHEMA_VERSION = '1'
+B31G_DETAIL_SCHEMA_VERSION = '2'
 
 
 @dataclass(frozen=True)

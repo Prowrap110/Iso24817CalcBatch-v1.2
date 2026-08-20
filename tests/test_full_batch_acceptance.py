@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from io import BytesIO
+import json
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -209,6 +210,19 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert main.cell(4, main_columns['Governing B31G Length [mm]']).value == 35.0
     assert main.cell(4, main_columns['Governing B31G Remaining Wall [mm]']).value == 10.0
     assert [main.cell(row, main_columns['B31G Candidate Count']).value for row in (2, 3, 4)] == [1, 1, 2]
+    b31g_references = [
+        json.loads(main.cell(row, main_columns['B31G Detail']).value)
+        for row in (2, 3, 4)
+    ]
+    assert [reference['detail_schema_version'] for reference in b31g_references] == [
+        '2', '2', '2',
+    ]
+    assert [reference['inline_candidate'] is not None for reference in b31g_references] == [
+        True, True, False,
+    ]
+    assert b31g_references[0]['inline_candidate']['length_mm'] == 1000.0
+    assert b31g_references[1]['inline_candidate']['length_mm'] == 10.0
+    assert b31g_references[2]['detail_excel_row_range'] == '2:3'
     detail_signature = _detail_result_signature(result_book)
     assert detail_signature[0] == (
         'R-001', 'D-01', 10.0, 9.652, 'Yes', 2, 'OK', None, None,

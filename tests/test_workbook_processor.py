@@ -171,6 +171,76 @@ def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row
     ])
 
 
+def test_actual_and_independent_workbook_audits_are_inline_bounded_and_stable():
+    """Catches single-candidate traces being replaced by reference metadata only."""
+    source = workbook_bytes_with_rows([
+        valid_row_values(**{'Defect Length Basis': 'Actual defect length'}),
+        valid_row_values(**{'Defect Length Basis': 'Independent defects'}),
+    ])
+
+    first = process_workbook(source, FIXED_TIME, 'single-candidates.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    main = first_workbook['Batch Input & Results']
+    headings = tuple(cell.value for cell in main[1])
+    b31g_column = headings.index('B31G Detail') + 1
+    references = [json.loads(main.cell(row, b31g_column).value) for row in (2, 3)]
+
+    assert [reference['governing_defect_id'] for reference in references] == [
+        'Actual/combined defect', 'Independent 10x10 mm defects',
+    ]
+    assert [reference['inline_candidate']['length_mm'] for reference in references] == [
+        100.0, 10.0,
+    ]
+    assert [reference['inline_candidate']['remaining_wall_mm'] for reference in references] == [
+        4.5, 4.5,
+    ]
+    inline_keys = {
+        'defect_id', 'length_mm', 'remaining_wall_mm', 'method', 'd_over_t',
+        'length_parameter_z', 'folias_factor', 'flow_stress_mpa',
+        'failure_stress_mpa', 'failure_pressure_bar', 'safe_pressure_bar',
+        'safety_factor', 'operating_hoop_stress_mpa', 'applicable',
+        'acceptable', 'credited_safe_pressure_bar', 'governing', 'warning_codes',
+    }
+    assert all(set(reference['inline_candidate']) == inline_keys for reference in references)
+    for row, reference in zip((2, 3), references, strict=True):
+        value = main.cell(row, b31g_column).value
+        assert len(value) < 2000
+        assert value == json.dumps(reference, sort_keys=True, separators=(',', ':'))
+        assert reference['inline_candidate']['credited_safe_pressure_bar'] == pytest.approx(
+            main.cell(row, headings.index('Effective Pipe Capacity [bar]') + 1).value
+        )
+
+    second = process_workbook(
+        first.workbook_bytes, FIXED_TIME, 'single-candidates-processed.xlsx',
+    )
+    second_main = _workbook(second.workbook_bytes)['Batch Input & Results']
+    assert [second_main.cell(row, b31g_column).value for row in (2, 3)] == [
+        main.cell(row, b31g_column).value for row in (2, 3)
+    ]
+
+
+def test_legacy_actual_upgrade_preserves_inline_candidate_audit_on_reupload():
+    legacy = legacy_workbook_bytes_with_rows([valid_row_values()])
+
+    first = process_workbook(legacy, FIXED_TIME, 'legacy.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    main = first_workbook['Batch Input & Results']
+    headings = tuple(cell.value for cell in main[1])
+    b31g_column = headings.index('B31G Detail') + 1
+    reference = json.loads(main.cell(2, b31g_column).value)
+
+    assert reference['detail_schema_version'] == '2'
+    assert reference['detail_excel_row_range'] is None
+    assert reference['inline_candidate']['defect_id'] == 'Actual/combined defect'
+    assert reference['inline_candidate']['length_mm'] == 100.0
+    assert reference['inline_candidate']['remaining_wall_mm'] == 4.5
+
+    second = process_workbook(first.workbook_bytes, FIXED_TIME, 'legacy-reupload.xlsx')
+    assert _workbook(second.workbook_bytes)['Batch Input & Results'].cell(
+        2, b31g_column,
+    ).value == main.cell(2, b31g_column).value
+
+
 def test_warning_register_scans_detail_rows_501_502_and_2001():
     """Catches detail warnings being scanned with the 500-row main-table limit."""
     workbook = _workbook(workbook_bytes_with_rows([_manual_row()]))
@@ -226,8 +296,9 @@ def test_501_detail_candidates_use_bounded_valid_json_and_scalar_audit_rows():
         'candidate_count': 501,
         'detail_excel_row_range': '2:502',
         'detail_schema': 'Individual Defects',
-        'detail_schema_version': '1',
+        'detail_schema_version': '2',
         'governing_defect_id': 'D-0001',
+        'inline_candidate': None,
     }
     last_audit = {
         heading: detail.cell(502, detail_headings.index(heading) + 1).value
@@ -273,9 +344,11 @@ def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
         'candidate_count': 2000,
         'detail_excel_row_range': '2:2001',
         'detail_schema': 'Individual Defects',
-        'detail_schema_version': '1',
+        'detail_schema_version': '2',
         'governing_defect_id': 'D-0001',
+        'inline_candidate': None,
     }
+    assert 'candidates' not in first_reference
     audit_headings = (
         'Source Excel Row',
         'Calculation Status',

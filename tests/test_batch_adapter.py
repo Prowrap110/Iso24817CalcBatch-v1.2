@@ -37,6 +37,49 @@ def test_actual_adapter_returns_the_single_b31g_candidate():
     assert candidate.credited_safe_pressure_bar > 0
 
 
+@pytest.mark.parametrize(('basis', 'defect_id', 'length_mm'), (
+    (ACTUAL_DEFECT_LENGTH, 'Actual/combined defect', 100.0),
+    (INDEPENDENT_DEFECTS, 'Independent 10x10 mm defects', 10.0),
+))
+def test_single_candidate_modes_inline_the_complete_scalar_audit(
+    basis, defect_id, length_mm,
+):
+    """Catches Actual/Independent losing trace fields when no detail row exists."""
+    outcome = calculate_row(batch_info(), validated_row(**{
+        'Defect Length Basis': basis,
+    }))
+    candidate = outcome.candidate_calculations[0]
+    reference = outcome.outputs['B31G Detail']
+
+    assert reference == {
+        'candidate_count': 1,
+        'detail_excel_row_range': None,
+        'detail_schema': 'Individual Defects',
+        'detail_schema_version': '2',
+        'governing_defect_id': defect_id,
+        'inline_candidate': {
+            'defect_id': candidate.defect_id,
+            'length_mm': length_mm,
+            'remaining_wall_mm': 4.5,
+            'method': candidate.method,
+            'd_over_t': candidate.d_over_t,
+            'length_parameter_z': candidate.length_parameter_z,
+            'folias_factor': candidate.folias_factor,
+            'flow_stress_mpa': candidate.flow_stress_mpa,
+            'failure_stress_mpa': candidate.failure_stress_mpa,
+            'failure_pressure_bar': candidate.failure_pressure_bar,
+            'safe_pressure_bar': candidate.safe_pressure_bar,
+            'safety_factor': candidate.safety_factor,
+            'operating_hoop_stress_mpa': candidate.operating_hoop_stress_mpa,
+            'applicable': candidate.applicable,
+            'acceptable': candidate.acceptable,
+            'credited_safe_pressure_bar': candidate.credited_safe_pressure_bar,
+            'governing': candidate.governing,
+            'warning_codes': ', '.join(candidate.warning_codes),
+        },
+    }
+
+
 def test_independent_adapter_returns_the_conservative_pit_candidate():
     """Catches using the repair-zone span as the independent B31G length."""
     outcome = calculate_row(batch_info(), validated_row(**{
@@ -96,8 +139,9 @@ def test_manual_adapter_returns_main_and_candidate_outputs():
         'candidate_count': 2,
         'detail_excel_row_range': None,
         'detail_schema': 'Individual Defects',
-        'detail_schema_version': '1',
+        'detail_schema_version': '2',
         'governing_defect_id': 'D-02',
+        'inline_candidate': None,
     }
     assert outcome.outputs['Type A / Class 3 Check Run'] is True
     class3 = outcome.outputs['Type A Detail']['optional_class3_check']
