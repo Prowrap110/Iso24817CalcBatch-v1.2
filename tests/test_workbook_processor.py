@@ -590,6 +590,62 @@ def test_relationship_worksheet_with_nonworksheet_content_type_rejects_before_op
     )
 
 
+def test_foreign_namespace_duplicate_relationship_cannot_shadow_dense_target(
+    monkeypatch,
+):
+    """A foreign duplicate must not replace the genuine OPC relationship."""
+    import workbook_processor
+
+    source = _dense_workbook_with_duplicate_relationship(
+        100_001,
+        relationship_namespace='urn:protap:foreign-relationships',
+    )
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached foreign-namespace shadow bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
+def test_duplicate_opc_relationship_id_is_rejected_before_openpyxl(monkeypatch):
+    """Ambiguous genuine OPC relationship IDs are invalid package metadata."""
+    import workbook_processor
+
+    source = _dense_workbook_with_duplicate_relationship(100_001)
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached duplicate OPC relationship bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
+def test_explicit_internal_relationship_target_mode_is_accepted():
+    source = _explicit_internal_relationship_workbook_bytes()
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+
+
 def test_arbitrary_suffix_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     """Catches a valid worksheet content type using a non-XML part suffix."""
     import workbook_processor
@@ -1286,6 +1342,76 @@ def _relabeled_dense_worksheet_bytes(cell_count: int) -> bytes:
                 )
                 assert target in content
                 content = content.replace(target, replacement)
+            output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _dense_workbook_with_duplicate_relationship(
+    cell_count: int,
+    relationship_namespace: str | None = None,
+) -> bytes:
+    """Append a safe-target decoy after the genuine dense-sheet relationship."""
+    source = _relabeled_dense_worksheet_bytes(cell_count)
+    namespace = (
+        f' xmlns="{relationship_namespace}"'.encode()
+        if relationship_namespace is not None
+        else b''
+    )
+    decoy = (
+        b'<Relationship'
+        + namespace
+        + b' Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+        b'relationships/worksheet" Target="/xl/worksheets/sheet6.xml" '
+        b'Id="rId5"/>'
+    )
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == 'xl/_rels/workbook.xml.rels':
+                assert content.endswith(b'</Relationships>')
+                content = content.replace(
+                    b'</Relationships>', decoy + b'</Relationships>',
+                )
+            output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _explicit_internal_relationship_workbook_bytes() -> bytes:
+    """Return a valid workbook with explicitly internal OPC relationships."""
+    source = workbook_bytes_with_rows([valid_row_values()])
+    office_document = (
+        b'<Relationship Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/officeDocument" '
+        b'Target="xl/workbook.xml" Id="rId1"/>'
+    )
+    explicit_office_document = office_document.replace(
+        b'/>', b' TargetMode="Internal"/>',
+    )
+    worksheet = (
+        b'<Relationship Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/worksheet" '
+        b'Target="/xl/worksheets/sheet1.xml" Id="rId1"/>'
+    )
+    explicit_worksheet = worksheet.replace(
+        b'/>', b' TargetMode="iNtErNaL"/>',
+    )
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '_rels/.rels':
+                assert office_document in content
+                content = content.replace(
+                    office_document, explicit_office_document,
+                )
+            elif entry.filename == 'xl/_rels/workbook.xml.rels':
+                assert worksheet in content
+                content = content.replace(worksheet, explicit_worksheet)
             output_zip.writestr(entry, content)
     return output.getvalue()
 

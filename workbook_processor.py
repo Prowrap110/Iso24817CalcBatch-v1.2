@@ -116,6 +116,10 @@ _SPREADSHEETML_MAIN_NAMESPACES = frozenset({
 _WORKSHEET_CONTENT_TYPE = (
     'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
 )
+_OPC_RELATIONSHIPS_NAMESPACES = frozenset({
+    'http://schemas.openxmlformats.org/package/2006/relationships',
+    'http://purl.oclc.org/ooxml/package/relationships',
+})
 _OFFICE_DOCUMENT_RELATIONSHIP_TYPES = frozenset({
     'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument',
     'http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument',
@@ -1156,6 +1160,8 @@ def _worksheet_part_names(
     overrides, defaults = declarations
 
     root_relationships = _relationship_records(archive, '_rels/.rels')
+    if root_relationships is None:
+        return frozenset(), False
     workbook_relationships = [
         record for record in root_relationships.values()
         if record[0] in _OFFICE_DOCUMENT_RELATIONSHIP_TYPES
@@ -1164,7 +1170,10 @@ def _worksheet_part_names(
         return frozenset(), False
     _, workbook_target, workbook_target_mode = workbook_relationships[0]
     workbook_part = _resolve_relationship_target('', workbook_target)
-    if workbook_target_mode or workbook_part not in entry_names:
+    if (
+        not _is_internal_target_mode(workbook_target_mode)
+        or workbook_part not in entry_names
+    ):
         return frozenset(), False
 
     sheet_relationship_ids = _workbook_sheet_relationship_ids(
@@ -1174,6 +1183,8 @@ def _worksheet_part_names(
     workbook_part_relationships = _relationship_records(
         archive, relationships_part,
     )
+    if workbook_part_relationships is None:
+        return frozenset(), False
     worksheet_parts: set[str] = set()
     for relationship_id in sheet_relationship_ids:
         record = workbook_part_relationships.get(relationship_id)
@@ -1182,7 +1193,7 @@ def _worksheet_part_names(
         relationship_type, target, target_mode = record
         target_part = _resolve_relationship_target(workbook_part, target)
         if (
-            target_mode
+            not _is_internal_target_mode(target_mode)
             or relationship_type not in _WORKSHEET_RELATIONSHIP_TYPES
             or target_part not in entry_names
             or _effective_content_type(target_part, overrides, defaults)
@@ -1226,25 +1237,38 @@ def _content_type_declarations(
 def _relationship_records(
     archive: zipfile.ZipFile,
     part_name: str,
-) -> dict[str, tuple[str, str, str]]:
+) -> dict[str, tuple[str, str, str]] | None:
     entry = archive.getinfo(part_name)
     if entry.flag_bits & 0x1:
         return {}
     records: dict[str, tuple[str, str, str]] = {}
     with archive.open(entry) as relationships_xml:
         for _, element in iterparse(relationships_xml, events=('end',)):
-            _, local_name = _xml_expanded_name(element.tag)
-            if local_name == 'Relationship':
+            namespace, local_name = _xml_expanded_name(element.tag)
+            if (
+                namespace in _OPC_RELATIONSHIPS_NAMESPACES
+                and local_name == 'Relationship'
+            ):
                 relationship_id = element.attrib.get('Id', '')
                 relationship_type = element.attrib.get('Type', '')
                 target = element.attrib.get('Target', '')
                 target_mode = element.attrib.get('TargetMode', '')
-                if relationship_id and relationship_type and target:
-                    records[relationship_id] = (
-                        relationship_type, target, target_mode,
-                    )
+                if (
+                    not relationship_id
+                    or not relationship_type
+                    or not target
+                    or relationship_id in records
+                ):
+                    return None
+                records[relationship_id] = (
+                    relationship_type, target, target_mode,
+                )
             element.clear()
     return records
+
+
+def _is_internal_target_mode(target_mode: str) -> bool:
+    return not target_mode or target_mode.casefold() == 'internal'
 
 
 def _workbook_sheet_relationship_ids(
