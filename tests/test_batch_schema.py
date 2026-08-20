@@ -1,4 +1,10 @@
-from batch_schema import BatchInfo, INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
+from batch_schema import (
+    BatchInfo,
+    DETAIL_OUTPUT_HEADERS,
+    INPUT_HEADERS,
+    MAX_ROWS,
+    OUTPUT_HEADERS,
+)
 
 
 def test_row_inputs_begin_with_pipe_od_and_exclude_common_fields():
@@ -43,4 +49,29 @@ def test_current_outputs_keep_legacy_outputs_and_add_linked_corrosion_results():
         'Governing Defect ID',
         'Governing B31G Length [mm]',
         'Governing B31G Remaining Wall [mm]',
+    )
+
+
+def test_detail_outputs_hold_the_complete_scalar_b31g_candidate_audit():
+    """Catches candidate intermediates being kept only in opaque main-row JSON."""
+    assert DETAIL_OUTPUT_HEADERS == (
+        'Source Excel Row',
+        'Calculation Status',
+        'Error Code',
+        'Error Message',
+        'B31G Method',
+        'B31G d/t',
+        'B31G Length Parameter z',
+        'B31G Folias Factor M',
+        'B31G Flow Stress [MPa]',
+        'B31G Estimated Failure Stress [MPa]',
+        'B31G Failure Pressure [bar]',
+        'B31G Safe Pressure [bar]',
+        'B31G Safety Factor',
+        'B31G Operating Hoop Stress [MPa]',
+        'B31G Applicable',
+        'B31G Acceptable',
+        'Credited Safe Pressure [bar]',
+        'Governing Defect',
+        'Assessment Warning Codes',
     )

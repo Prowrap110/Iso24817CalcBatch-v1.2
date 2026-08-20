@@ -218,6 +218,20 @@ def test_individual_defect_requires_exact_yes_and_normalizes_linking_values():
     assert row.separation_exceeds_3t is True
 
 
+def test_individual_defect_rejects_defect_id_too_long_for_bounded_audit_reference():
+    row, issues = validate_individual_defect_row(2, {
+        'Repair Group ID': 'R-001',
+        'Defect ID': 'D' * 256,
+        'Individual longitudinal length [mm]': 10.0,
+        'Remaining wall [mm]': 4.5,
+        'Separation exceeds 3t': 'Yes',
+    })
+
+    assert row is None
+    assert [issue.code for issue in issues] == ['OUT_OF_RANGE']
+    assert issues[0].message == 'Defect ID: must contain at most 255 characters.'
+
+
 def test_individual_defect_rejects_nonexact_separation_confirmation():
     row, issues = validate_individual_defect_row(2, {
         'Repair Group ID': 'R-001',

@@ -162,6 +162,11 @@ def validate_individual_defect_row(
             text = '' if raw_value is None else str(raw_value).strip()
             if not text:
                 issues.append(_issue('REQUIRED_VALUE', header, 'a value is required'))
+            elif header == 'Defect ID' and len(text) > 255:
+                issues.append(_issue(
+                    'OUT_OF_RANGE', header,
+                    'must contain at most 255 characters',
+                ))
             else:
                 normalized[header] = text
             continue

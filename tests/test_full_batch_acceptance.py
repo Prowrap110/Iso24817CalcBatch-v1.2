@@ -101,6 +101,7 @@ def test_release_documentation_uses_current_template_and_emitted_provenance():
     readme = (root / 'README.md').read_text()
     engine_source = (root / 'ENGINE_SOURCE.md').read_text()
 
+    assert readme.startswith('# PROWRAP CalcBatch v1.2\n')
     assert 'PROWRAP_CalcBatch_v1.2_Template.xlsx' in readme
     assert 'Processed workbooks record the short released revision `746f3b3`.' not in engine_source
     assert 'processor revision update is deferred' not in engine_source
@@ -120,7 +121,11 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     detail_columns = _columns(DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS)
 
     assert input_book.sheetnames == EXPECTED_SHEETS
-    assert input_book['Batch Information']['A1'].value == 'PROWRAP Batch Repair Calculator'
+    assert input_book.properties.title == 'PROWRAP CalcBatch v1.2'
+    assert input_book['Batch Information']['A1'].value == 'PROWRAP CalcBatch v1.2'
+    assert input_book['Instructions']['A1'].value == (
+        'PROWRAP CalcBatch v1.2 — Instructions'
+    )
     assert [input_book['Batch Information'].cell(row, 2).value for row in (3, 4, 5)] == [
         'Acceptance Customer', 'Acceptance Location', 'ACCEPT-001',
     ]
@@ -176,7 +181,7 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert (
         detail.tables['IndividualDefects'].ref,
         detail.tables['IndividualDefects'].autoFilter.ref,
-    ) == ('A1:O2001', 'A1:O2001')
+    ) == ('A1:X2001', 'A1:X2001')
     assert (main.protection.autoFilter, main.protection.selectLockedCells,
             main.protection.selectUnlockedCells) == (False, False, False)
     assert (detail.protection.autoFilter, detail.protection.selectLockedCells,
@@ -186,7 +191,7 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
         False, False, True, True,
     )
     assert (detail['A2'].protection.locked, detail['E2'].protection.locked,
-            detail['F2'].protection.locked, detail['O2'].protection.locked) == (
+            detail['F2'].protection.locked, detail['X2'].protection.locked) == (
         False, False, True, True,
     )
     assert _summary_identity_signature(result_book) == (
@@ -207,17 +212,27 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     detail_signature = _detail_result_signature(result_book)
     assert detail_signature[0] == (
         'R-001', 'D-01', 10.0, 9.652, 'Yes', 2, 'OK', None, None,
-        'modified', True, False, pytest.approx(88.2257484144555), None, 'W013',
+        'modified', pytest.approx(0.19566666666666674),
+        pytest.approx(0.008202099737532808), pytest.approx(1.0025699928354461),
+        pytest.approx(519.0), pytest.approx(518.7347244738818),
+        pytest.approx(122.53576168674373), pytest.approx(88.2257484144555),
+        pytest.approx(1.3888888888888888), pytest.approx(444.07666666666677),
+        True, False, pytest.approx(88.2257484144555), None, 'W013',
     )
     assert detail_signature[1] == (
         'R-001', 'D-02', 35.0, 10.0, 'Yes', 3, 'OK', None, None,
-        'modified', True, False, pytest.approx(87.83461911867067), 'Yes', 'W013',
+        'modified', pytest.approx(0.16666666666666666),
+        pytest.approx(0.1004757217847769), pytest.approx(1.0310259179787589),
+        pytest.approx(519.0), pytest.approx(516.4350290773692),
+        pytest.approx(121.99252655370927), pytest.approx(87.83461911867067),
+        pytest.approx(1.3888888888888888), pytest.approx(444.07666666666677),
+        True, False, pytest.approx(87.83461911867067), 'Yes', 'W013',
     )
-    assert detail_signature[2] == (
+    assert detail_signature[2][:9] == (
         'R-BAD', 'D-BAD', 10.0, 9.652, 'No', 4, 'INPUT ERROR',
         'INVALID_SELECTION', 'Separation exceeds 3t: must be exactly Yes.',
-        None, None, None, None, None, None,
     )
+    assert detail_signature[2][9:] == (None,) * 15
 
     warning_rows = {
         result_book['Warnings'].cell(row, 1).value: result_book['Warnings'].cell(row, 3).value

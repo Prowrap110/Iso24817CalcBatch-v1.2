@@ -3,7 +3,13 @@
 from dataclasses import dataclass
 from typing import Any
 
-from batch_schema import APPROVED_CLOTH_WIDTHS_MM, BatchInfo, ValidatedRow
+from batch_schema import (
+    APPROVED_CLOTH_WIDTHS_MM,
+    B31G_DETAIL_SCHEMA,
+    B31G_DETAIL_SCHEMA_VERSION,
+    BatchInfo,
+    ValidatedRow,
+)
 from batch_mechanisms import normalize_upload_mechanism
 from batch_status import CalculationStatus, classify_result
 from engine.corrosion_defects import (
@@ -25,6 +31,15 @@ from warning_catalog import warning_codes
 class CandidateCalculation:
     defect_id: str
     method: str
+    d_over_t: float
+    length_parameter_z: float
+    folias_factor: float
+    flow_stress_mpa: float
+    failure_stress_mpa: float
+    failure_pressure_bar: float
+    safe_pressure_bar: float
+    safety_factor: float
+    operating_hoop_stress_mpa: float
     applicable: bool
     acceptable: bool
     credited_safe_pressure_bar: float
@@ -175,6 +190,15 @@ def _candidate_calculations(result: dict[str, Any]) -> tuple[CandidateCalculatio
         calculations.append(CandidateCalculation(
             defect_id=item['defect_id'],
             method=assessment['method'],
+            d_over_t=assessment['d_over_t'],
+            length_parameter_z=assessment['z'],
+            folias_factor=assessment['folias_m'],
+            flow_stress_mpa=assessment['s_flow_mpa'],
+            failure_stress_mpa=assessment['s_f_mpa'],
+            failure_pressure_bar=assessment['p_f_mpa'] * 10.0,
+            safe_pressure_bar=assessment['p_s_mpa'] * 10.0,
+            safety_factor=assessment['safety_factor'],
+            operating_hoop_stress_mpa=assessment['s_o_mpa'],
             applicable=assessment['applicable'],
             acceptable=assessment['acceptable'],
             credited_safe_pressure_bar=item['credited_pressure_mpa'] * 10.0,
@@ -259,7 +283,13 @@ def _map_outputs(
         'Fabric Area [m2]': result['optimized_sqm'],
         'Epoxy Mass [kg]': result['epoxy_kg'],
         'Compliance Warnings': warnings,
-        'B31G Detail': result['b31g_assessments'] or b31g,
+        'B31G Detail': {
+            'candidate_count': len(result['b31g_assessments']),
+            'detail_excel_row_range': None,
+            'detail_schema': B31G_DETAIL_SCHEMA,
+            'detail_schema_version': B31G_DETAIL_SCHEMA_VERSION,
+            'governing_defect_id': result['governing_defect_id'],
+        },
         'Type A Detail': type_a_detail,
         'Type B Detail': result['type_b_details'],
         'Repair Zone Length [mm]': result['repair_zone_length_mm'],

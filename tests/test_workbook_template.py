@@ -38,6 +38,16 @@ def test_template_has_common_info_and_row_table():
     assert workbook['Lists'].sheet_state == 'hidden'
 
 
+def test_template_uses_exact_calc_batch_v12_product_identity():
+    workbook = _template_workbook()
+
+    assert workbook.properties.title == 'PROWRAP CalcBatch v1.2'
+    assert workbook['Batch Information']['A1'].value == 'PROWRAP CalcBatch v1.2'
+    assert workbook['Instructions']['A1'].value == (
+        'PROWRAP CalcBatch v1.2 — Instructions'
+    )
+
+
 def test_template_has_blank_editable_cost_sheet_in_new_controlled_order():
     workbook = _template_workbook()
 

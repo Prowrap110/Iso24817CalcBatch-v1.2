@@ -1,6 +1,6 @@
-# PROWRAP Batch Repair Calculator
+# PROWRAP CalcBatch v1.2
 
-Version 1.2.0 is a separate Excel batch calculator for preliminary PROWRAP repair screening. It processes up to 500 independent pipeline-defect rows and returns a new workbook with row-level results appended beside the inputs.
+PROWRAP CalcBatch v1.2 is a separate Excel batch calculator for preliminary PROWRAP repair screening. It processes up to 500 continuous-repair rows and 2,000 linked individual-defect rows, then returns a new workbook with row-level results appended beside the inputs.
 
 It is deliberately independent from the existing single-case PROWRAP v1.1 calculator. This repository, its deployment, and its URL must never replace, redirect, modify, or be deployed over the v1.1 application.
 

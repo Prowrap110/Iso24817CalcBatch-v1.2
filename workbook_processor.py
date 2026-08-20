@@ -364,7 +364,18 @@ def process_workbook(
                 ),
             )
         calculations[excel_row] = calculation
-        _write_result_row(data_sheet, excel_row, calculation, processed_timestamp)
+        linked_detail_rows = prepared.links.detail_rows_by_main_excel_row.get(
+            excel_row, (),
+        )
+        _write_result_row(
+            data_sheet,
+            excel_row,
+            calculation,
+            processed_timestamp,
+            detail_excel_rows=tuple(
+                detail_row.source_excel_row for detail_row in linked_detail_rows
+            ),
+        )
         status_counts[calculation.status.value] += 1
 
     candidate_by_detail_row: dict[int, CandidateCalculation] = {}
@@ -833,7 +844,14 @@ def _input_error_calculation(
     )
 
 
-def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, timestamp: str) -> None:
+def _write_result_row(
+    worksheet,
+    excel_row: int,
+    calculation: RowCalculation,
+    timestamp: str,
+    *,
+    detail_excel_rows: tuple[int, ...] = (),
+) -> None:
     outputs = {
         'Source Excel Row': calculation.source_excel_row,
         'Calculation Status': calculation.status.value,
@@ -844,6 +862,14 @@ def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, ti
         'Processed At [UTC]': timestamp,
         **calculation.outputs,
     }
+    b31g_reference = outputs.get('B31G Detail')
+    if isinstance(b31g_reference, dict):
+        b31g_reference = dict(b31g_reference)
+        if detail_excel_rows:
+            b31g_reference['detail_excel_row_range'] = (
+                f'{detail_excel_rows[0]}:{detail_excel_rows[-1]}'
+            )
+        outputs['B31G Detail'] = b31g_reference
     for column, heading in enumerate(OUTPUT_HEADERS, start=len(INPUT_HEADERS) + 1):
         worksheet.cell(excel_row, column).value = _output_value(heading, outputs.get(heading))
 
@@ -866,6 +892,17 @@ def _write_detail_result_row(
     if candidate is not None and not issues:
         outputs.update({
             'B31G Method': candidate.method,
+            'B31G d/t': candidate.d_over_t,
+            'B31G Length Parameter z': candidate.length_parameter_z,
+            'B31G Folias Factor M': candidate.folias_factor,
+            'B31G Flow Stress [MPa]': candidate.flow_stress_mpa,
+            'B31G Estimated Failure Stress [MPa]': candidate.failure_stress_mpa,
+            'B31G Failure Pressure [bar]': candidate.failure_pressure_bar,
+            'B31G Safe Pressure [bar]': candidate.safe_pressure_bar,
+            'B31G Safety Factor': candidate.safety_factor,
+            'B31G Operating Hoop Stress [MPa]': (
+                candidate.operating_hoop_stress_mpa
+            ),
             'B31G Applicable': candidate.applicable,
             'B31G Acceptable': candidate.acceptable,
             'Credited Safe Pressure [bar]': candidate.credited_safe_pressure_bar,
@@ -924,8 +961,17 @@ def _write_warnings_sheet(workbook) -> None:
     detail_sheet = workbook['Individual Defects']
     affected_rows: dict[str, dict[str, list[int]]] = {}
 
-    def collect(worksheet, warning_column: int, source_row_column: int, location: str) -> None:
-        for excel_row, _ in _populated_rows(worksheet):
+    def collect(
+        worksheet,
+        warning_column: int,
+        source_row_column: int,
+        location: str,
+        input_headers: tuple[str, ...],
+        max_rows: int,
+    ) -> None:
+        for excel_row, _ in _populated_rows(
+            worksheet, input_headers, max_rows=max_rows,
+        ):
             value = worksheet.cell(excel_row, warning_column).value
             if not isinstance(value, str) or not value.strip():
                 continue
@@ -943,12 +989,16 @@ def _write_warnings_sheet(workbook) -> None:
         len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Compliance Warnings') + 1,
         len(INPUT_HEADERS) + OUTPUT_HEADERS.index('Source Excel Row') + 1,
         'main',
+        INPUT_HEADERS,
+        MAX_ROWS,
     )
     collect(
         detail_sheet,
         len(DETAIL_INPUT_HEADERS) + DETAIL_OUTPUT_HEADERS.index('Assessment Warning Codes') + 1,
         len(DETAIL_INPUT_HEADERS) + DETAIL_OUTPUT_HEADERS.index('Source Excel Row') + 1,
         'detail',
+        DETAIL_INPUT_HEADERS,
+        MAX_DETAIL_ROWS,
     )
 
     if not affected_rows:

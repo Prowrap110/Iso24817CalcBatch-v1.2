@@ -111,12 +111,24 @@ DETAIL_OUTPUT_HEADERS = (
     'Error Code',
     'Error Message',
     'B31G Method',
+    'B31G d/t',
+    'B31G Length Parameter z',
+    'B31G Folias Factor M',
+    'B31G Flow Stress [MPa]',
+    'B31G Estimated Failure Stress [MPa]',
+    'B31G Failure Pressure [bar]',
+    'B31G Safe Pressure [bar]',
+    'B31G Safety Factor',
+    'B31G Operating Hoop Stress [MPa]',
     'B31G Applicable',
     'B31G Acceptable',
     'Credited Safe Pressure [bar]',
     'Governing Defect',
     'Assessment Warning Codes',
 )
+
+B31G_DETAIL_SCHEMA = 'Individual Defects'
+B31G_DETAIL_SCHEMA_VERSION = '1'
 
 
 @dataclass(frozen=True)

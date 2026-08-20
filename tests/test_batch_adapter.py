@@ -80,6 +80,25 @@ def test_manual_adapter_returns_main_and_candidate_outputs():
     assert outcome.outputs['Governing Defect ID'] == 'D-02'
     assert outcome.outputs['Governing B31G Length [mm]'] == 35.0
     assert [item.defect_id for item in outcome.candidate_calculations] == ['D-01', 'D-02']
+    first_candidate = outcome.candidate_calculations[0]
+    assert first_candidate.d_over_t == pytest.approx(0.19566666666666674)
+    assert first_candidate.length_parameter_z == pytest.approx(0.008202099737532808)
+    assert first_candidate.folias_factor == pytest.approx(1.0025699928354461)
+    assert first_candidate.flow_stress_mpa == pytest.approx(519.0)
+    assert first_candidate.failure_stress_mpa == pytest.approx(518.7347244738818)
+    assert first_candidate.failure_pressure_bar == pytest.approx(122.53576168674373)
+    assert first_candidate.safe_pressure_bar == pytest.approx(88.2257484144555)
+    assert first_candidate.safety_factor == pytest.approx(1.3888888888888888)
+    assert first_candidate.operating_hoop_stress_mpa == pytest.approx(
+        444.07666666666677
+    )
+    assert outcome.outputs['B31G Detail'] == {
+        'candidate_count': 2,
+        'detail_excel_row_range': None,
+        'detail_schema': 'Individual Defects',
+        'detail_schema_version': '1',
+        'governing_defect_id': 'D-02',
+    }
     assert outcome.outputs['Type A / Class 3 Check Run'] is True
     class3 = outcome.outputs['Type A Detail']['optional_class3_check']
     assert class3['input_summary']['substrate_allowable_pressure_bar'] == (

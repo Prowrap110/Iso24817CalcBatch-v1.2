@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from io import BytesIO
+import json
 import zipfile
 
 import pytest
@@ -168,6 +169,150 @@ def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row
     assert [detail.cell(row, detail_headings.index('Credited Safe Pressure [bar]') + 1).value for row in (2, 3)] == pytest.approx([
         88.2257484144555, 87.83461911867067,
     ])
+
+
+def test_warning_register_scans_detail_rows_501_502_and_2001():
+    """Catches detail warnings being scanned with the 500-row main-table limit."""
+    workbook = _workbook(workbook_bytes_with_rows([_manual_row()]))
+    detail = workbook['Individual Defects']
+    for excel_row in (501, 502, 2001):
+        values = detail_values(
+            group='R-001', defect=f'D-{excel_row}', length=10, wall=9.652,
+        )
+        for column, header in enumerate(DETAIL_INPUT_HEADERS, start=1):
+            detail.cell(excel_row, column, values[header])
+
+    result = process_workbook(_saved(workbook), FIXED_TIME, 'detail-boundaries.xlsx')
+    warnings = _workbook(result.workbook_bytes)['Warnings']
+    affected_rows = {
+        warnings.cell(row, 1).value: warnings.cell(row, 3).value
+        for row in range(4, warnings.max_row + 1)
+    }
+
+    assert affected_rows['W013'] == (
+        'Main 2; Individual Defects 501, 502, 2001'
+    )
+
+
+def test_501_detail_candidates_use_bounded_valid_json_and_scalar_audit_rows():
+    """Catches Excel truncating a large opaque candidate collection to invalid JSON."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(
+                group='R-001', defect=f'D-{index:04d}', length=10, wall=9.652,
+            )
+            for index in range(1, 502)
+        ],
+    )
+
+    result = process_workbook(source, FIXED_TIME, '501-details.xlsx')
+    workbook = _workbook(result.workbook_bytes)
+    main = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
+    main_headings = tuple(cell.value for cell in main[1])
+    detail_headings = tuple(cell.value for cell in detail[1])
+    b31g_detail = main.cell(2, main_headings.index('B31G Detail') + 1).value
+
+    try:
+        reference = json.loads(b31g_detail)
+    except json.JSONDecodeError as error:
+        pytest.fail(
+            f'B31G Detail must be bounded valid JSON; got {len(b31g_detail)} '
+            f'characters and decode error {error}'
+        )
+    assert len(b31g_detail) < 1000
+    assert reference == {
+        'candidate_count': 501,
+        'detail_excel_row_range': '2:502',
+        'detail_schema': 'Individual Defects',
+        'detail_schema_version': '1',
+        'governing_defect_id': 'D-0001',
+    }
+    last_audit = {
+        heading: detail.cell(502, detail_headings.index(heading) + 1).value
+        for heading in DETAIL_OUTPUT_HEADERS
+    }
+    assert last_audit['Source Excel Row'] == 502
+    assert last_audit['Calculation Status'] == 'OK'
+    assert last_audit['B31G d/t'] == pytest.approx(0.19566666666666674)
+    assert last_audit['B31G Safe Pressure [bar]'] == pytest.approx(88.2257484144555)
+    assert last_audit['B31G Operating Hoop Stress [MPa]'] == pytest.approx(
+        444.07666666666677
+    )
+    assert last_audit['Assessment Warning Codes'] == 'W013'
+
+
+def test_full_2000_detail_audit_is_bounded_and_stable_on_reupload():
+    """Catches maximum-size linked audits overflowing or changing on rebuild."""
+    main_row = _manual_row()
+    main_row['Design Pressure [bar]'] = 50.0
+    main_row['Run Type A / Class 3 Check'] = 'No'
+    source = workbook_bytes_with_rows(
+        [main_row],
+        detail_rows=[
+            detail_values(
+                group='R-001', defect=f'D-{index:04d}', length=10, wall=9.652,
+            )
+            for index in range(1, MAX_DETAIL_ROWS + 1)
+        ],
+    )
+
+    first = process_workbook(source, FIXED_TIME, '2000-details.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    main = first_workbook['Batch Input & Results']
+    detail = first_workbook['Individual Defects']
+    main_headings = tuple(cell.value for cell in main[1])
+    detail_headings = tuple(cell.value for cell in detail[1])
+    b31g_column = main_headings.index('B31G Detail') + 1
+    first_reference_text = main.cell(2, b31g_column).value
+    first_reference = json.loads(first_reference_text)
+
+    assert len(first_reference_text) < 1000
+    assert first_reference == {
+        'candidate_count': 2000,
+        'detail_excel_row_range': '2:2001',
+        'detail_schema': 'Individual Defects',
+        'detail_schema_version': '1',
+        'governing_defect_id': 'D-0001',
+    }
+    audit_headings = (
+        'Source Excel Row',
+        'Calculation Status',
+        'B31G d/t',
+        'B31G Length Parameter z',
+        'B31G Folias Factor M',
+        'B31G Flow Stress [MPa]',
+        'B31G Estimated Failure Stress [MPa]',
+        'B31G Failure Pressure [bar]',
+        'B31G Safe Pressure [bar]',
+        'B31G Safety Factor',
+        'B31G Operating Hoop Stress [MPa]',
+        'B31G Applicable',
+        'B31G Acceptable',
+        'Credited Safe Pressure [bar]',
+        'Governing Defect',
+    )
+    first_last_audit = tuple(
+        detail.cell(2001, detail_headings.index(heading) + 1).value
+        for heading in audit_headings
+    )
+    assert first_last_audit[0:2] == (2001, 'OK')
+    assert all(value is not None for value in first_last_audit[2:-1])
+    assert first_last_audit[-1] is None
+
+    second = process_workbook(
+        first.workbook_bytes, FIXED_TIME, '2000-details-processed.xlsx',
+    )
+    second_workbook = _workbook(second.workbook_bytes)
+    second_main = second_workbook['Batch Input & Results']
+    second_detail = second_workbook['Individual Defects']
+
+    assert second_main.cell(2, b31g_column).value == first_reference_text
+    assert tuple(
+        second_detail.cell(2001, detail_headings.index(heading) + 1).value
+        for heading in audit_headings
+    ) == first_last_audit
 
 
 def test_partial_detail_with_trimmed_group_invalidates_only_its_manual_owner():
