@@ -5,12 +5,13 @@ from typing import Any
 
 
 MAX_ROWS = 500
+MAX_DETAIL_ROWS = 2000
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 STITCH_OVERLAP_MM = 50.0
 APPROVED_CLOTH_WIDTHS_MM = (300.0, 500.0)
 
 
-INPUT_HEADERS = (
+LEGACY_INPUT_HEADERS = (
     'Pipe OD [mm]',
     'Nominal Wall [mm]',
     'Pipe Yield [MPa]',
@@ -32,7 +33,7 @@ INPUT_HEADERS = (
 )
 
 
-OUTPUT_HEADERS = (
+LEGACY_OUTPUT_HEADERS = (
     'Source Excel Row',
     'Calculation Status',
     'Error Code',
@@ -69,6 +70,55 @@ OUTPUT_HEADERS = (
 )
 
 
+def _insert_after(
+    headers: tuple[str, ...],
+    existing_header: str,
+    inserted_headers: tuple[str, ...],
+) -> tuple[str, ...]:
+    index = headers.index(existing_header) + 1
+    return headers[:index] + inserted_headers + headers[index:]
+
+
+INPUT_HEADERS = _insert_after(
+    LEGACY_INPUT_HEADERS,
+    'Defect Length [mm]',
+    ('Defect Length Basis', 'Repair Group ID'),
+)
+
+
+OUTPUT_HEADERS = LEGACY_OUTPUT_HEADERS + (
+    'Repair Zone Length [mm]',
+    '3t Interaction Threshold [mm]',
+    'B31G Candidate Count',
+    'Governing Defect ID',
+    'Governing B31G Length [mm]',
+    'Governing B31G Remaining Wall [mm]',
+)
+
+
+DETAIL_INPUT_HEADERS = (
+    'Repair Group ID',
+    'Defect ID',
+    'Individual longitudinal length [mm]',
+    'Remaining wall [mm]',
+    'Separation exceeds 3t',
+)
+
+
+DETAIL_OUTPUT_HEADERS = (
+    'Source Excel Row',
+    'Calculation Status',
+    'Error Code',
+    'Error Message',
+    'B31G Method',
+    'B31G Applicable',
+    'B31G Acceptable',
+    'Credited Safe Pressure [bar]',
+    'Governing Defect',
+    'Assessment Warning Codes',
+)
+
+
 @dataclass(frozen=True)
 class BatchInfo:
     customer: str
@@ -86,3 +136,13 @@ class ValidationIssue:
 class ValidatedRow:
     source_excel_row: int
     values: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ValidatedIndividualDefectRow:
+    source_excel_row: int
+    repair_group_id: str
+    defect_id: str
+    longitudinal_length_mm: float
+    remaining_wall_mm: float
+    separation_exceeds_3t: bool

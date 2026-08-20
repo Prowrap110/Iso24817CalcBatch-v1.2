@@ -23,6 +23,8 @@ def valid_row_values(**overrides):
         'Mechanism': 'Corrosion',
         'Defect Location': 'External',
         'Defect Length [mm]': 100.0,
+        'Defect Length Basis': 'Actual defect length',
+        'Repair Group ID': None,
         'Remaining Wall [mm]': 4.5,
         'Internal Corrosion Rate [mm/year]': None,
         'Design Life [years]': 20,
@@ -35,6 +37,11 @@ def valid_row_values(**overrides):
         'Prowrap CF Cloth Width [mm]': 300.0,
     }
     values.update(overrides)
+    if (
+        values['Mechanism'] != 'Corrosion'
+        or values['Defect Location'] != 'External'
+    ) and 'Defect Length Basis' not in overrides:
+        values['Defect Length Basis'] = None
     return values
 
 
@@ -49,6 +56,24 @@ def validated_row(**overrides):
 
     row, issues = validate_row(2, valid_row_values(**overrides))
     assert not issues
+    assert row is not None
+    return row
+
+
+def valid_detail_row(
+    excel_row, *, group='R-001', defect='D-01', length=10.0, wall=4.5,
+    separation='Yes',
+):
+    from batch_validation import validate_individual_defect_row
+
+    row, issues = validate_individual_defect_row(excel_row, {
+        'Repair Group ID': group,
+        'Defect ID': defect,
+        'Individual longitudinal length [mm]': length,
+        'Remaining wall [mm]': wall,
+        'Separation exceeds 3t': separation,
+    })
+    assert issues == ()
     assert row is not None
     return row
 

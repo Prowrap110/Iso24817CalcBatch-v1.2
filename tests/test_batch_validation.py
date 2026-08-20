@@ -3,7 +3,12 @@ import math
 import pytest
 
 from batch_schema import BatchInfo
-from batch_validation import validate_batch_info, validate_row
+from batch_validation import (
+    validate_batch_info,
+    validate_individual_defect_row,
+    validate_row,
+)
+from engine.corrosion_defects import ACTUAL_DEFECT_LENGTH, ENTER_MANUALLY, INDEPENDENT_DEFECTS
 from tests.helpers import valid_row_values
 
 
@@ -165,3 +170,62 @@ def test_issues_follow_input_column_order():
         'INVALID_SELECTION',
         'OUT_OF_RANGE',
     ]
+
+
+@pytest.mark.parametrize('basis', [ACTUAL_DEFECT_LENGTH, INDEPENDENT_DEFECTS])
+def test_nonmanual_external_requires_wall_and_rejects_group_id(basis):
+    row, issues = validate_row(2, valid_row_values(**{
+        'Defect Length Basis': basis,
+        'Repair Group ID': 'R-001',
+        'Remaining Wall [mm]': None,
+    }))
+
+    assert row is None
+    assert [issue.code for issue in issues] == [
+        'REPAIR_GROUP_NOT_ALLOWED',
+        'REQUIRED_VALUE',
+    ]
+
+
+def test_manual_external_requires_group_and_blank_main_wall():
+    row, issues = validate_row(2, valid_row_values(**{
+        'Defect Length Basis': ENTER_MANUALLY,
+        'Repair Group ID': 'R-001',
+        'Remaining Wall [mm]': None,
+    }))
+
+    assert issues == ()
+    assert row is not None
+    assert row.values['Repair Group ID'] == 'R-001'
+
+
+def test_individual_defect_requires_exact_yes_and_normalizes_linking_values():
+    row, issues = validate_individual_defect_row(12, {
+        'Repair Group ID': ' R-001 ',
+        'Defect ID': ' D-02 ',
+        'Individual longitudinal length [mm]': '35',
+        'Remaining wall [mm]': '9.652',
+        'Separation exceeds 3t': 'Yes',
+    })
+
+    assert issues == ()
+    assert row is not None
+    assert row.source_excel_row == 12
+    assert row.repair_group_id == 'R-001'
+    assert row.defect_id == 'D-02'
+    assert row.longitudinal_length_mm == 35.0
+    assert row.remaining_wall_mm == 9.652
+    assert row.separation_exceeds_3t is True
+
+
+def test_individual_defect_rejects_nonexact_separation_confirmation():
+    row, issues = validate_individual_defect_row(2, {
+        'Repair Group ID': 'R-001',
+        'Defect ID': 'D-01',
+        'Individual longitudinal length [mm]': 10.0,
+        'Remaining wall [mm]': 4.5,
+        'Separation exceeds 3t': ' yes ',
+    })
+
+    assert row is None
+    assert [issue.code for issue in issues] == ['INVALID_SELECTION']
