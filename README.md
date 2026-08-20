@@ -37,7 +37,7 @@ Quantity and Total Amount complete the Cost Calculation tail after Cost and Pric
 
 The **Cost Calculation** table contains the twenty requested engineering fields in the same compact row order as the populated defects. Cost is calculated as `Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg`; Price is `Cost x Price Multiplier`. Both remain blank until their required assumptions and material quantities exist. No currency symbol is fixed, so enter both material rates in one consistent currency. The three assumptions remain editable after download, and a processed workbook may be uploaded again: its assumptions are retained while the controlled table and formulas are rebuilt from the trusted engineering results.
 
-Processed defect rows show only permanent references such as `W003, W006` in the `Compliance Warnings` column. The separate **Warnings** worksheet gives each code's full meaning, required action, and affected source-row numbers. Repeated warnings share one permanent code and one consolidated register entry.
+The separate **Warnings** worksheet consolidates every permanent warning code with its full meaning, required action, and affected source-row numbers. Repeated warnings share one permanent code and one register entry. The app validation preview reports row-level status and correction messages before calculation.
 
 Prowrap CF cloth widths of **300 mm and 500 mm** are approved configurations in this batch release; both continue to use the fixed 50 mm stitch overlap. The approved material basis is **Tg = 110 degC**, giving a general qualified design-temperature limit of **90 degC** and a long-life Class 3 Type B limit of **80 degC**.
 

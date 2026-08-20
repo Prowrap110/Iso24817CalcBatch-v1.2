@@ -377,6 +377,8 @@ def test_template_contains_no_formulas_and_has_user_guidance():
         if cell.value is not None
     )
     assert 'warnings worksheet' in instruction_text
+    assert 'the warnings worksheet lists permanent warning codes' in instruction_text
+    assert 'processed result rows show permanent warning codes' not in instruction_text
     assert 'up to 150 populated main rows and 150 individual defects rows' in instruction_text
     assert 'wall loss [%], required structural thickness [mm], installed plies, total repair length [mm], cloth band count, procurement axial length [mm], fabric area [m2], epoxy mass [kg], and repair zone length [mm]' in instruction_text
     assert 'quantity is editable' in instruction_text

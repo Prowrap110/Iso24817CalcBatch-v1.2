@@ -396,7 +396,7 @@ def _build_instructions(worksheet) -> None:
         ('A7', '5. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
         ('A8', '6. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
         ('A9', '7. Prowrap CF Cloth Width must be greater than the fixed 50 mm stitch overlap. The approved configured widths are 300 mm and 500 mm; other valid widths require review.', False),
-        ('A10', '8. Processed result rows show permanent warning codes only. Read their full meaning, required action, and affected rows on the Warnings worksheet.', False),
+        ('A10', '8. The Warnings worksheet lists permanent warning codes, their full meaning, required action, and affected Excel rows. Use the app validation preview for row-level status and correction messages.', False),
         ('A11', '9. On Cost Calculation, B3 (CF Cost / m2), E3 (Epoxy Cost / kg), and H3 (Price Multiplier) are highlighted and editable, as is Quantity. The assumptions may be blank or retain values from a previously processed workbook. Quantity is editable only as a blank or non-negative number and may retain a value from a previously processed workbook.', False),
         ('A12', '10. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
         ('A13', '11. Price = Cost x Price Multiplier. Total Amount = Price x Quantity. No currency symbol is fixed, so use one consistent currency for both material rates.', False),

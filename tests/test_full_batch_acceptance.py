@@ -103,6 +103,9 @@ def test_release_documentation_uses_current_template_and_emitted_provenance():
 
     assert readme.startswith('# PROWRAP CalcBatch v1.2\n')
     assert 'PROWRAP_CalcBatch_v1.2_Template.xlsx' in readme
+    assert 'The separate **Warnings** worksheet consolidates every permanent warning code' in readme
+    assert 'The app validation preview reports row-level status and correction messages' in readme
+    assert 'in the `Compliance Warnings` column' not in readme
     assert 'Processed workbooks record the short released revision `746f3b3`.' not in engine_source
     assert 'processor revision update is deferred' not in engine_source
     assert '`91b68d6`' in engine_source
