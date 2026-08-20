@@ -12,8 +12,16 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.workbook.defined_name import DefinedName
 
 from batch_mechanisms import CANONICAL_MECHANISMS
-from batch_schema import INPUT_HEADERS, MAX_ROWS, OUTPUT_HEADERS
+from batch_schema import (
+    DETAIL_INPUT_HEADERS,
+    DETAIL_OUTPUT_HEADERS,
+    INPUT_HEADERS,
+    MAX_DETAIL_ROWS,
+    MAX_ROWS,
+    OUTPUT_HEADERS,
+)
 from cost_calculation import COST_INPUTS, COST_TABLE_HEADERS
+from engine.corrosion_defects import DEFECT_LENGTH_BASES
 from workbook_formatting import (
     HEADER_HEIGHT,
     INPUT_ERROR_COLOR,
@@ -25,6 +33,7 @@ from workbook_formatting import (
     SYSTEM_ERROR_COLOR,
     apply_common_field_style,
     apply_header_style,
+    header_column_letter,
     set_capped_column_widths,
     unlock_cells,
 )
@@ -38,7 +47,19 @@ _CHOICES = {
         'Component Type', ('Straight', 'Bend', 'Tee', 'Flange', 'Reducer'),
     ),
     'AxialLoadCaseChoices': ('Axial Load Case', (0, 1)),
+    'DefectLengthBasisChoices': ('Defect Length Basis', DEFECT_LENGTH_BASES),
+    'SeparationChoices': ('Separation exceeds 3t', ('Yes', None)),
 }
+
+_MAIN_DROPDOWN_NAMES = (
+    'MechanismChoices',
+    'DefectLocationChoices',
+    'TypeACheckChoices',
+    'ComponentTypeChoices',
+    'AxialLoadCaseChoices',
+    'DefectLengthBasisChoices',
+)
+_DETAIL_DROPDOWN_NAMES = ('SeparationChoices',)
 
 _HEADER_NOTES = {
     'Pipe OD [mm]': 'Required. Enter the outside diameter in millimetres; value must be positive.',
@@ -53,6 +74,14 @@ _HEADER_NOTES = {
     ),
     'Defect Location': 'Required. Choose External or Internal.',
     'Defect Length [mm]': 'Required. Enter the defect length in millimetres; value must be positive.',
+    'Defect Length Basis': (
+        'For external corrosion, choose Actual defect length, Independent defects, '
+        'or Enter manually as described on the Instructions worksheet.'
+    ),
+    'Repair Group ID': (
+        'Required only for Enter manually. Use the same identifier on each linked '
+        'Individual Defects row.'
+    ),
     'Remaining Wall [mm]': 'Required. Enter the minimum remaining wall in millimetres; it cannot exceed nominal wall.',
     'Internal Corrosion Rate [mm/year]': (
         'Enter zero or a positive internal corrosion rate in mm/year. This value is '
@@ -74,6 +103,14 @@ _HEADER_NOTES = {
 _THIN_GRAY = Side(style='thin', color='D9E1F2')
 _COST_INPUT_COLOR = 'FFF2CC'
 
+_DETAIL_HEADER_NOTES = {
+    'Repair Group ID': 'Required. Link this individual defect to an Enter manually main row.',
+    'Defect ID': 'Required. Use a unique defect identifier within each repair group.',
+    'Individual longitudinal length [mm]': 'Required. Enter a positive individual defect length in millimetres.',
+    'Remaining wall [mm]': 'Required. Enter the individual defect minimum remaining wall in millimetres.',
+    'Separation exceeds 3t': 'Required. Choose Yes only when the next defect is separated by more than three nominal wall thicknesses.',
+}
+
 
 def create_template_workbook() -> bytes:
     """Return a ready-to-fill controlled batch workbook as ``.xlsx`` bytes."""
@@ -81,6 +118,7 @@ def create_template_workbook() -> bytes:
     batch_info = workbook.active
     batch_info.title = 'Batch Information'
     data = workbook.create_sheet('Batch Input & Results')
+    individual_defects = workbook.create_sheet('Individual Defects')
     cost = workbook.create_sheet('Cost Calculation')
     warnings = workbook.create_sheet('Warnings')
     summary = workbook.create_sheet('Summary')
@@ -89,6 +127,7 @@ def create_template_workbook() -> bytes:
 
     _build_batch_information(batch_info)
     _build_data_sheet(data)
+    _build_individual_defects(individual_defects)
     _build_cost_calculation(cost)
     _build_warnings(warnings)
     _build_summary(summary)
@@ -158,7 +197,7 @@ def _build_data_sheet(worksheet) -> None:
                     shrink_to_fit=is_diagnostic_detail,
                 )
 
-    _add_dropdowns(worksheet)
+    _add_dropdowns(worksheet, _MAIN_DROPDOWN_NAMES, MAX_ROWS)
     _add_status_formatting(worksheet, input_count + 2)
     worksheet.protection.sheet = True
     worksheet.protection.autoFilter = False
@@ -168,6 +207,51 @@ def _build_data_sheet(worksheet) -> None:
     for column in ('D', 'E', 'H', 'I', 'J', 'T', 'U', 'V', 'W', 'AF', 'AX', 'AY'):
         worksheet.column_dimensions[column].width = 28
     worksheet.column_dimensions['W'].width = 16
+
+
+def _build_individual_defects(worksheet) -> None:
+    """Build the protected 2,000-row linked-corrosion input table."""
+    headers = DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS
+    input_count = len(DETAIL_INPUT_HEADERS)
+    for column, header in enumerate(headers, start=1):
+        cell = worksheet.cell(1, column, header)
+        apply_header_style(
+            cell, INPUT_HEADER_COLOR if column <= input_count else OUTPUT_HEADER_COLOR,
+        )
+        if column <= input_count:
+            cell.comment = Comment(_DETAIL_HEADER_NOTES[header], 'PROTAP')
+
+    worksheet.row_dimensions[1].height = HEADER_HEIGHT
+    worksheet.freeze_panes = 'B2'
+    table = Table(
+        displayName='IndividualDefects',
+        ref=f'A1:{worksheet.cell(1, len(headers)).column_letter}{MAX_DETAIL_ROWS + 1}',
+    )
+    table.tableStyleInfo = TableStyleInfo(
+        name='TableStyleMedium2', showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True, showColumnStripes=False,
+    )
+    worksheet.add_table(table)
+
+    unlock_cells(
+        worksheet.cell(row, column)
+        for row in range(2, MAX_DETAIL_ROWS + 2)
+        for column in range(1, input_count + 1)
+    )
+    for row in range(2, MAX_DETAIL_ROWS + 2):
+        for column in range(1, len(headers) + 1):
+            cell = worksheet.cell(row, column)
+            cell.border = Border(bottom=_THIN_GRAY)
+            if column > input_count:
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
+
+    _add_dropdowns(worksheet, _DETAIL_DROPDOWN_NAMES, MAX_DETAIL_ROWS)
+    _add_status_formatting(worksheet, input_count + 2, MAX_DETAIL_ROWS)
+    worksheet.protection.sheet = True
+    worksheet.protection.autoFilter = False
+    worksheet.protection.selectLockedCells = False
+    worksheet.protection.selectUnlockedCells = False
+    set_capped_column_widths(worksheet)
 
 
 def _build_cost_calculation(worksheet) -> None:
@@ -300,7 +384,7 @@ def _build_instructions(worksheet) -> None:
         ('A11', '9. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
         ('A12', '10. Price = Cost x Price Multiplier. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
         ('A13', '11. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost and Price formulas and may be safely uploaded again.', False),
-        ('A14', '12. Previously downloaded controlled five-sheet and six-sheet workbooks remain accepted and are upgraded to the current seven-sheet output.', False),
+        ('A14', '12. Previously downloaded controlled five-sheet and six-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
         ('A15', '13. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
         ('A16', 'Status meanings', True),
         ('A17', 'OK — a valid result with no review warning.', False),
@@ -309,6 +393,7 @@ def _build_instructions(worksheet) -> None:
         ('A20', 'INPUT ERROR — correct the indicated input and calculate again.', False),
         ('A21', 'SYSTEM ERROR — an unexpected processing issue occurred; retain the workbook and contact PROTAP.', False),
         ('A23', 'Material temperature basis: Tg = 110 degC, general qualified design limit = 90 degC, and long-life Class 3 Type B limit = 80 degC. The input template contains no formulas or macros. It is a controlled input template, not an engineering approval or certification.', False),
+        ('A24', 'Linked corrosion modes: Actual defect length = continuous or interacting B31G length. Independent defects = 10 x 10 mm, each separated by more than 3t. t means nominal pipe wall thickness. Enter manually = leave main Remaining Wall blank and link detail rows with Repair Group ID. Defect Length remains the complete outer-to-outer continuous repair-zone span.', False),
     )
     for address, text, heading in lines:
         cell = worksheet[address]
@@ -316,9 +401,10 @@ def _build_instructions(worksheet) -> None:
         cell.font = Font(name='Calibri', size=14 if address == 'A1' else 11, bold=heading)
         cell.alignment = Alignment(wrap_text=True, vertical='top')
     worksheet.column_dimensions['A'].width = 115
-    for row in range(3, 24):
+    for row in range(3, 25):
         worksheet.row_dimensions[row].height = 32
     worksheet.row_dimensions[15].height = 48
+    worksheet.row_dimensions[24].height = 64
     worksheet.row_dimensions[1].height = 28
 
 
@@ -332,10 +418,11 @@ def _build_lists(workbook, worksheet) -> None:
         ))
 
 
-def _add_dropdowns(worksheet) -> None:
-    for name, (header, _) in _CHOICES.items():
-        column = INPUT_HEADERS.index(header) + 1
-        letter = worksheet.cell(1, column).column_letter
+def _add_dropdowns(worksheet, choice_names, max_rows: int) -> None:
+    """Add controlled selections by resolving each target from its semantic header."""
+    for name in choice_names:
+        header, _ = _CHOICES[name]
+        letter = header_column_letter(worksheet, header)
         validation = DataValidation(
             type='list', formula1=f'={name}', allow_blank=True,
             errorTitle='Select a supported value',
@@ -343,11 +430,11 @@ def _add_dropdowns(worksheet) -> None:
             showErrorMessage=True,
             errorStyle='stop',
         )
-        validation.add(f'{letter}2:{letter}{MAX_ROWS + 1}')
+        validation.add(f'{letter}2:{letter}{max_rows + 1}')
         worksheet.add_data_validation(validation)
 
 
-def _add_status_formatting(worksheet, status_column: int) -> None:
+def _add_status_formatting(worksheet, status_column: int, max_rows: int = MAX_ROWS) -> None:
     letter = worksheet.cell(1, status_column).column_letter
     status_colors = {
         'OK': OK_COLOR,
@@ -362,4 +449,4 @@ def _add_status_formatting(worksheet, status_column: int) -> None:
             dxf=DifferentialStyle(fill=PatternFill(fill_type='solid', fgColor=color)),
         )
         rule.formula = [f'NOT(ISERROR(SEARCH("{status}",{letter}2)))']
-        worksheet.conditional_formatting.add(f'{letter}2:{letter}{MAX_ROWS + 1}', rule)
+        worksheet.conditional_formatting.add(f'{letter}2:{letter}{max_rows + 1}', rule)
