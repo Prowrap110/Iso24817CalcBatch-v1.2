@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 
 from openpyxl import load_workbook
 import pytest
@@ -12,7 +13,6 @@ from batch_schema import (
     INPUT_HEADERS,
     OUTPUT_HEADERS,
 )
-from cost_calculation import COST_SOURCE_HEADERS
 from tests.helpers import legacy_workbook_bytes_with_rows, valid_row_values
 from workbook_processor import process_workbook
 
@@ -22,6 +22,28 @@ EXPECTED_SHEETS = [
     'Batch Information', 'Batch Input & Results', 'Individual Defects',
     'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
 ]
+EXPECTED_COST_SOURCE_HEADERS = (
+    'Pipe OD [mm]',
+    'Nominal Wall [mm]',
+    'Pipe Yield [MPa]',
+    'Design Pressure [bar]',
+    'Operating Temperature [degC]',
+    'Mechanism',
+    'Defect Location',
+    'Defect Length [mm]',
+    'Remaining Wall [mm]',
+    'Design Life [years]',
+    'Design Factor',
+    'Prowrap CF Cloth Width [mm]',
+    'Wall Loss [%]',
+    'Required Structural Thickness [mm]',
+    'Installed Plies',
+    'Total Repair Length [mm]',
+    'Cloth Band Count',
+    'Procurement Axial Length [mm]',
+    'Fabric Area [m2]',
+    'Epoxy Mass [kg]',
+)
 
 
 def _columns(headers):
@@ -38,6 +60,53 @@ def _formula_cells(workbook):
     ]
 
 
+def _main_result_signature(workbook):
+    """Return every emitted main engineering output for all six repair rows."""
+    worksheet = workbook['Batch Input & Results']
+    columns = _columns(INPUT_HEADERS + OUTPUT_HEADERS)
+    return tuple(
+        tuple(worksheet.cell(row, columns[heading]).value for heading in OUTPUT_HEADERS)
+        for row in range(2, 8)
+    )
+
+
+def _detail_result_signature(workbook):
+    """Return linked-detail ownership and complete calculated trace cells."""
+    worksheet = workbook['Individual Defects']
+    columns = _columns(DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS)
+    headings = DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS
+    return tuple(
+        tuple(worksheet.cell(row, columns[heading]).value for heading in headings)
+        for row in range(2, 5)
+    )
+
+
+def _warning_signature(workbook):
+    worksheet = workbook['Warnings']
+    return tuple(
+        tuple(worksheet.cell(row, column).value for column in range(1, 4))
+        for row in range(4, worksheet.max_row + 1)
+        if worksheet.cell(row, 1).value
+    )
+
+
+def _summary_identity_signature(workbook):
+    worksheet = workbook['Summary']
+    return tuple(worksheet[address].value for address in ('B3', 'B4', 'B5', 'B24', 'B25'))
+
+
+def test_release_documentation_uses_current_template_and_emitted_provenance():
+    """Release instructions must not direct users to stale output identity."""
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / 'README.md').read_text()
+    engine_source = (root / 'ENGINE_SOURCE.md').read_text()
+
+    assert 'PROWRAP_CalcBatch_v1.2_Template.xlsx' in readme
+    assert 'Processed workbooks record the short released revision `746f3b3`.' not in engine_source
+    assert 'processor revision update is deferred' not in engine_source
+    assert '`91b68d6`' in engine_source
+
+
 def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     """Exercise all v1.2 modes through the production template and processor."""
     from scripts.create_acceptance_workbook import create_acceptance_workbook
@@ -52,7 +121,6 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
 
     assert input_book.sheetnames == EXPECTED_SHEETS
     assert input_book['Batch Information']['A1'].value == 'PROWRAP Batch Repair Calculator'
-    assert input_book['Batch Information']['A1'].value != 'PROWRAP v1.1 Calculator'
     assert [input_book['Batch Information'].cell(row, 2).value for row in (3, 4, 5)] == [
         'Acceptance Customer', 'Acceptance Location', 'ACCEPT-001',
     ]
@@ -75,6 +143,11 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
             'Defect Length [mm]', 'Prowrap CF Cloth Width [mm]',
         )] == [1016.0, 12.0, 104.9, 1000.0, 500.0]
     assert main_input.cell(4, main_columns['Remaining Wall [mm]']).value is None
+    assert [main_input.cell(5, main_columns[header]).value for header in (
+        'Pipe OD [mm]', 'Nominal Wall [mm]', 'Design Pressure [bar]',
+        'Defect Length [mm]', 'Defect Length Basis', 'Repair Group ID',
+        'Remaining Wall [mm]', 'Prowrap CF Cloth Width [mm]',
+    )] == [1016.0, 12.0, 104.9, 1000.0, 'Enter manually', 'R-BAD', None, 500.0]
     assert [
         tuple(detail_input.cell(row, detail_columns[header]).value for header in DETAIL_INPUT_HEADERS)
         for row in range(2, 5)
@@ -93,10 +166,28 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert result_book['Lists'].sheet_state == 'hidden'
     assert main.protection.sheet is True
     assert detail.protection.sheet is True
-    assert main.tables['BatchRows'].ref == main.tables['BatchRows'].autoFilter.ref
-    assert detail.tables['IndividualDefects'].ref == detail.tables['IndividualDefects'].autoFilter.ref
-    assert result_book['Summary']['B24'].value == '1.2.0'
-    assert result_book['Summary']['B25'].value == '91b68d6'
+    assert (main.tables['BatchRows'].ref, main.tables['BatchRows'].autoFilter.ref) == (
+        'A1:BG501', 'A1:BG501',
+    )
+    assert (
+        detail.tables['IndividualDefects'].ref,
+        detail.tables['IndividualDefects'].autoFilter.ref,
+    ) == ('A1:O2001', 'A1:O2001')
+    assert (main.protection.autoFilter, main.protection.selectLockedCells,
+            main.protection.selectUnlockedCells) == (False, False, False)
+    assert (detail.protection.autoFilter, detail.protection.selectLockedCells,
+            detail.protection.selectUnlockedCells) == (False, False, False)
+    assert (main['A2'].protection.locked, main['T2'].protection.locked,
+            main['U2'].protection.locked, main['BG2'].protection.locked) == (
+        False, False, True, True,
+    )
+    assert (detail['A2'].protection.locked, detail['E2'].protection.locked,
+            detail['F2'].protection.locked, detail['O2'].protection.locked) == (
+        False, False, True, True,
+    )
+    assert _summary_identity_signature(result_book) == (
+        'Acceptance Customer', 'Acceptance Location', 'ACCEPT-001', '1.2.0', '91b68d6',
+    )
     assert [main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
         'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
     ]
@@ -109,14 +200,20 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert main.cell(4, main_columns['Governing B31G Length [mm]']).value == 35.0
     assert main.cell(4, main_columns['Governing B31G Remaining Wall [mm]']).value == 10.0
     assert [main.cell(row, main_columns['B31G Candidate Count']).value for row in (2, 3, 4)] == [1, 1, 2]
-    assert [detail.cell(row, detail_columns['Calculation Status']).value for row in (2, 3, 4)] == [
-        'OK', 'OK', 'INPUT ERROR',
-    ]
-    assert [detail.cell(row, detail_columns['Governing Defect']).value for row in (2, 3)] == [None, 'Yes']
-    assert [detail.cell(row, detail_columns['Credited Safe Pressure [bar]']).value for row in (2, 3)] == pytest.approx([
-        88.2257484144555, 87.83461911867067,
-    ])
-    assert 'INVALID_SELECTION' in detail.cell(4, detail_columns['Error Code']).value
+    detail_signature = _detail_result_signature(result_book)
+    assert detail_signature[0] == (
+        'R-001', 'D-01', 10.0, 9.652, 'Yes', 2, 'OK', None, None,
+        'modified', True, False, pytest.approx(88.2257484144555), None, 'W013',
+    )
+    assert detail_signature[1] == (
+        'R-001', 'D-02', 35.0, 10.0, 'Yes', 3, 'OK', None, None,
+        'modified', True, False, pytest.approx(87.83461911867067), 'Yes', 'W013',
+    )
+    assert detail_signature[2] == (
+        'R-BAD', 'D-BAD', 10.0, 9.652, 'No', 4, 'INPUT ERROR',
+        'INVALID_SELECTION', 'Separation exceeds 3t: must be exactly Yes.',
+        None, None, None, None, None, None,
+    )
 
     warning_rows = {
         result_book['Warnings'].cell(row, 1).value: result_book['Warnings'].cell(row, 3).value
@@ -126,7 +223,9 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert warning_rows['W013'] == 'Main 2, 3, 4; Individual Defects 2, 3'
 
     cost = result_book['Cost Calculation']
-    assert tuple(cost.cell(5, column).value for column in range(1, 21)) == COST_SOURCE_HEADERS
+    assert tuple(cost.cell(5, column).value for column in range(1, 21)) == (
+        EXPECTED_COST_SOURCE_HEADERS
+    )
     assert (cost['U5'].value, cost['V5'].value) == ('Cost', 'Price')
     assert (cost.tables['CostRows'].ref, cost.tables['CostRows'].autoFilter.ref) == ('A5:V11', 'A5:V11')
     assert cost.protection.sheet is True
@@ -144,8 +243,13 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     source_columns = _columns(INPUT_HEADERS + OUTPUT_HEADERS)
     for cost_row, main_row in zip(range(6, 12), range(2, 8), strict=True):
         assert [cost.cell(cost_row, column).value for column in range(1, 21)] == [
-            main.cell(main_row, source_columns[header]).value for header in COST_SOURCE_HEADERS
+            main.cell(main_row, source_columns[header]).value
+            for header in EXPECTED_COST_SOURCE_HEADERS
         ]
+
+    main_signature = _main_result_signature(result_book)
+    warning_signature = _warning_signature(result_book)
+    summary_identity = _summary_identity_signature(result_book)
 
     cost['B3'], cost['E3'], cost['H3'] = 25.0, 8.0, 1.4
     reupload = BytesIO()
@@ -161,6 +265,10 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert [rebuilt_main.cell(row, main_columns['Calculation Status']).value for row in range(2, 8)] == [
         'REVIEW REQUIRED', 'REVIEW REQUIRED', 'REVIEW REQUIRED', 'INPUT ERROR', 'OK', 'OK',
     ]
+    assert _main_result_signature(rebuilt_book) == main_signature
+    assert _detail_result_signature(rebuilt_book) == detail_signature
+    assert _warning_signature(rebuilt_book) == warning_signature
+    assert _summary_identity_signature(rebuilt_book) == summary_identity
 
 
 @pytest.mark.parametrize('sheet_count', (5, 6, 7))

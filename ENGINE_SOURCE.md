@@ -3,13 +3,15 @@
 **CalcBatch release version:** `1.2.0`
 **Verified linked-corrosion source revision:** `91b68d64508a4786934f0e17f2aea0dbebf745a7` (`91b68d6` recorded in processed workbooks)
 
-The calculation engine in this repository was copied from
+## Historical batch baseline (not the emitted source revision)
+
+The original batch baseline was copied from
 [`Prowrap110/Iso24817Calcv1.1`](https://github.com/Prowrap110/Iso24817Calcv1.1)
 at released merge commit `746f3b3d65d73a2836962126e76f880919c51d0d`
 on 2026-08-15. That release commit contains the reviewed dent-split feature
-head `7ca0e66ab4f8334fe07fda54b64599f54b1a1256`; the calculation modules ported
-here use that approved source behavior. Processed workbooks record the short
-released revision `746f3b3`.
+head `7ca0e66ab4f8334fe07fda54b64599f54b1a1256`; it remains the historical
+origin for the non-corrosion batch behavior. It is not the source revision
+emitted by CalcBatch v1.2 workbooks.
 
 The copied modules are:
 
@@ -45,8 +47,10 @@ replaced by the source module:
   remain batch behavior; the v1.2 corrosion basis applies only to external
   corrosion.
 
-Workbook version and emitted source-revision fields remain unchanged in this
-task; the processor revision update is deferred to its dedicated task.
+CalcBatch v1.2 emits Batch Engine Version `1.2.0` and Source Engine Revision
+`91b68d6` on every processed main row and in the Summary. The historical v1.1
+baseline revision is retained here only for traceability; it is never emitted
+as the current linked-corrosion engine revision.
 
 ## Approved dent mechanism split
 

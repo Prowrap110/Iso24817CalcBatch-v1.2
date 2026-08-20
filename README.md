@@ -15,7 +15,7 @@ streamlit run app.py
 
 ## Use the batch workbook
 
-1. Download the controlled `PROWRAP_Batch_Template.xlsx` from the app.
+1. Download the controlled `PROWRAP_CalcBatch_v1.2_Template.xlsx` from the app.
 2. On **Batch Information**, enter Customer, Project Location, and Report No once.
 3. On **Batch Input & Results**, enter one continuous repair zone per row, starting with `Pipe OD [mm]`. Do not add, remove, rename, or reorder columns.
 4. For external corrosion, select one **Defect Length Basis**:
