@@ -279,6 +279,18 @@ def test_template_marks_inputs_editable_and_outputs_protected_with_clear_headers
     ).comment.text.lower()
 
 
+def test_template_protects_summary_outputs_and_keeps_selection_consistent():
+    """Catches a template whose summary/provenance values can be overwritten."""
+    summary = _template_workbook()['Summary']
+
+    assert summary.protection.sheet is True
+    assert summary.protection.selectLockedCells is False
+    assert summary.protection.selectUnlockedCells is False
+    assert all(summary[address].protection.locked for address in (
+        'A3', 'B3', 'A7', 'B7', 'A24', 'B24', 'A25', 'B25',
+    ))
+
+
 def test_protected_main_sheet_keeps_inputs_selectable_and_table_filterable():
     """Catches inverted openpyxl protection flags after workbook serialization."""
     workbook = _template_workbook()
@@ -347,6 +359,9 @@ def test_template_contains_no_formulas_and_has_user_guidance():
     assert 't means nominal pipe wall thickness.' in instruction_text
     assert 'enter manually = leave main remaining wall blank and link detail rows with repair group id.' in instruction_text
     assert 'defect length remains the complete outer-to-outer continuous repair-zone span.' in instruction_text
+    assert 'one main row per continuous repair' in instruction_text
+    assert 'one independent defect per row' not in instruction_text
+    assert 'five-sheet, six-sheet, and seven-sheet' in instruction_text
     assert 'preliminary screening' in ' '.join(
         str(cell.value).lower()
         for row in summary.iter_rows()

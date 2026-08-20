@@ -368,13 +368,16 @@ def _build_summary(worksheet) -> None:
     worksheet.column_dimensions['A'].width = 35
     worksheet.column_dimensions['B'].width = 42
     worksheet.row_dimensions[27].height = 48
+    worksheet.protection.sheet = True
+    worksheet.protection.selectLockedCells = False
+    worksheet.protection.selectUnlockedCells = False
 
 
 def _build_instructions(worksheet) -> None:
     lines = (
         ('A1', 'PROWRAP Batch Repair Calculator — Instructions', True),
         ('A3', '1. Complete Customer, Project Location, and Report No once on the Batch Information sheet.', False),
-        ('A4', '2. Enter one independent defect per row on Batch Input & Results; the first input is Pipe OD [mm].', False),
+        ('A4', '2. Enter one main row per continuous repair on Batch Input & Results; the first input is Pipe OD [mm].', False),
         ('A5', f'3. Enter up to {MAX_ROWS} populated rows. Blank rows are ignored; partially populated rows receive INPUT ERROR.', False),
         ('A6', '4. Use the dropdown selections exactly as shown. Units are mm, MPa, bar, degC, years, m2, and kg where stated.', False),
         ('A7', '5. Internal Corrosion Rate [mm/year] is required only where Mechanism is Corrosion and Defect Location is Internal.', False),
@@ -384,7 +387,7 @@ def _build_instructions(worksheet) -> None:
         ('A11', '9. Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg.', False),
         ('A12', '10. Price = Cost x Price Multiplier. No currency symbol is fixed, so use one consistent currency for both material rates.', False),
         ('A13', '11. The downloaded input template contains no formulas. A processed workbook contains only controlled Cost and Price formulas and may be safely uploaded again.', False),
-        ('A14', '12. Previously downloaded controlled five-sheet and six-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
+        ('A14', '12. Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks remain accepted and are upgraded to the current eight-sheet output.', False),
         ('A15', '13. Dent w/crack uses a full-pressure laminate. An eligible external Dent no-crack uses component-pipe substrate load sharing. Dent no-crack selects a calculation basis; it is not a complete dent integrity or fatigue acceptance assessment. Legacy Dent is accepted only when upgrading an older batch workbook and becomes Dent w/crack.', False),
         ('A16', 'Status meanings', True),
         ('A17', 'OK — a valid result with no review warning.', False),

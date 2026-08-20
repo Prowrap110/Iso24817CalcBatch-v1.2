@@ -39,14 +39,14 @@ The product accepts at most 500 populated main rows, 2,000 populated Individual 
 
 ## Final artifact verification — 2026-08-20
 
-The full suite passed immediately before workbook generation: **282 passed in
-369.61 s**. The spreadsheet artifact operation marker was successfully run once
+The full suite passed immediately before final workbook generation: **283 passed in
+373.05 s**. The spreadsheet artifact operation marker was successfully run once
 with `create`, two expected `.xlsx` outputs, and no subsequent marker run.
 
 | Artifact | Size (bytes) | SHA-256 |
 | --- | ---: | --- |
-| `PROWRAP_CalcBatch_v1.2_Acceptance_Input.xlsx` | 171,680 | `1a8bdb0adc21ee9e3bc09b6bdfca5ac969c219dd98c910bc9dc0df4bf3bff39e` |
-| `PROWRAP_CalcBatch_v1.2_Acceptance_Processed.xlsx` | 178,112 | `27b645300213c9d720f012b30d376a35c2592c647b1b1caf03a499f0c1f31c29` |
+| `PROWRAP_CalcBatch_v1.2_Acceptance_Input.xlsx` | 171,804 | `ea9a61fb160e60a383abaf6b033f705c28636a024efee42a7003610f0e00b5b9` |
+| `PROWRAP_CalcBatch_v1.2_Acceptance_Processed.xlsx` | 178,233 | `a111664dd2adae207efbf7cd95c26025e689d0f15708555fe6bd8d4079afc2fb` |
 
 The input workbook has no formulas. The processed workbook has exactly twelve
 formulas, and every one is confined to Cost Calculation `U6:V11`: the six
@@ -79,8 +79,10 @@ blank and editable.
 - Dent no-crack and Dent w/crack direct-engine checks retained their expected
   routes: 10.775653543307088 MPa / 3 plies and 0 MPa / 9 plies, respectively.
 - Re-uploading the processed workbook through `process_workbook` at the fixed
-  UTC time retained all main/detail engineering results, warnings, summary
-  identity, statuses, and the twelve controlled formulas.
+  UTC time retained all main/detail engineering results, warnings, common batch
+  fields, engine version, source revision, statuses, and the twelve controlled
+  formulas. Summary B7 is intentionally refreshed to the current uploaded
+  filename, so it is not part of the preserved-identity signature.
 
 ### Commercial recalculation and visual inspection
 
@@ -104,3 +106,20 @@ No current CalcBatch, v1.1, existing live target, deployment, remote, or GitHub
 publication was changed by this verification. The feature worktree has no
 tracked changes apart from this report; the two generated acceptance workbooks
 are intentionally untracked release artifacts.
+
+### Review correction
+
+Following independent review, Summary is now protected in blank templates,
+processed workbooks, and safe re-uploads. Its displayed fields and provenance
+cells remain locked, with the same compatible selection policy used on the
+controlled result sheets. The instructions now state that one main row is one
+continuous repair and explicitly list five-sheet, six-sheet, and seven-sheet
+legacy upgrades.
+
+The correction was implemented test-first: the three new/extended assertions
+failed before the template change, then the focused template/processor/
+acceptance set passed `106` tests. The final full suite passed `283` tests in
+`373.05 s`. The two artifacts above were regenerated through the production
+generator and processor at the fixed UTC time without another artifact-marker
+run. Their eight-sheet structure, formulas, protection, direct-engine values,
+re-upload behavior, and all-sheet render check were repeated successfully.

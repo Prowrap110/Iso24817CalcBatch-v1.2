@@ -166,6 +166,10 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert result_book['Lists'].sheet_state == 'hidden'
     assert main.protection.sheet is True
     assert detail.protection.sheet is True
+    assert result_book['Summary'].protection.sheet is True
+    assert all(result_book['Summary'][address].protection.locked for address in (
+        'B3', 'B7', 'B24', 'B25',
+    ))
     assert (main.tables['BatchRows'].ref, main.tables['BatchRows'].autoFilter.ref) == (
         'A1:BG501', 'A1:BG501',
     )
@@ -269,6 +273,10 @@ def test_linked_corrosion_release_acceptance_workbook(tmp_path):
     assert _detail_result_signature(rebuilt_book) == detail_signature
     assert _warning_signature(rebuilt_book) == warning_signature
     assert _summary_identity_signature(rebuilt_book) == summary_identity
+    assert rebuilt_book['Summary'].protection.sheet is True
+    assert all(rebuilt_book['Summary'][address].protection.locked for address in (
+        'B3', 'B7', 'B24', 'B25',
+    ))
 
 
 @pytest.mark.parametrize('sheet_count', (5, 6, 7))
