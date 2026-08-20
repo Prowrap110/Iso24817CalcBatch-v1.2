@@ -7,10 +7,29 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 from batch_adapter import RowCalculation
-from batch_schema import INPUT_HEADERS, MAX_ROWS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
+from batch_schema import (
+    DETAIL_INPUT_HEADERS,
+    DETAIL_OUTPUT_HEADERS,
+    INPUT_HEADERS,
+    MAX_DETAIL_ROWS,
+    MAX_ROWS,
+    MAX_UPLOAD_BYTES,
+    OUTPUT_HEADERS,
+)
 from batch_status import CalculationStatus
-from cost_calculation import COST_TABLE_HEADERS, cost_formula, price_formula
-from tests.helpers import valid_row_values, workbook_bytes_with_rows
+from cost_calculation import (
+    COST_SOURCE_HEADERS,
+    COST_TABLE_HEADERS,
+    cost_formula,
+    price_formula,
+)
+from engine.corrosion_defects import ENTER_MANUALLY
+from tests.helpers import (
+    detail_values,
+    legacy_workbook_bytes_with_rows,
+    valid_row_values,
+    workbook_bytes_with_rows,
+)
 from workbook_processor import (
     WorkbookProcessingError,
     _commercial_input_errors,
@@ -49,10 +68,204 @@ def test_inspects_a_valid_template_and_previews_populated_rows():
         'Pipe OD [mm]': 457.2,
         'Mechanism': 'Corrosion',
         'Defect Location': 'External',
+        'Defect Length Basis': 'Actual defect length',
+        'Repair Group ID': None,
         'Calculation Status': 'OK',
         'Error Code': '',
         'Error Message': '',
     },)
+
+
+def test_inspection_reports_main_detail_and_manual_group_counts():
+    """Catches a v1.2 inspection that ignores the linked detail table."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values(**{
+            'Defect Length Basis': ENTER_MANUALLY,
+            'Repair Group ID': 'R-001',
+            'Remaining Wall [mm]': None,
+        })],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.0),
+            detail_values(group='R-001', defect='D-02', length=35, wall=9.1),
+        ],
+    )
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+    assert inspection.populated_detail_rows == 2
+    assert inspection.manual_groups == 1
+    assert inspection.recognized_detail_input_headers == DETAIL_INPUT_HEADERS
+    assert inspection.missing_detail_input_headers == ()
+    assert inspection.unexpected_detail_headers == ()
+    assert inspection.preview[0]['Defect Length Basis'] == ENTER_MANUALLY
+    assert inspection.preview[0]['Repair Group ID'] == 'R-001'
+
+
+def _manual_row(group='R-001'):
+    return valid_row_values(**{
+        'Pipe OD [mm]': 1016.0,
+        'Nominal Wall [mm]': 12.0,
+        'Pipe Yield [MPa]': 450.0,
+        'Design Pressure [bar]': 104.9,
+        'Defect Length [mm]': 1000.0,
+        'Defect Length Basis': ENTER_MANUALLY,
+        'Repair Group ID': group,
+        'Remaining Wall [mm]': None,
+        'Prowrap CF Cloth Width [mm]': 500.0,
+        'Run Type A / Class 3 Check': 'Yes',
+    })
+
+
+def _result_signature(data: bytes):
+    workbook = _workbook(data)
+    main = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
+    return (
+        tuple(main.cell(2, column).value for column in range(
+            len(INPUT_HEADERS) + 1,
+            len(INPUT_HEADERS) + len(OUTPUT_HEADERS) + 1,
+        )),
+        tuple(
+            tuple(detail.cell(row, column).value for column in range(
+                len(DETAIL_INPUT_HEADERS) + 1,
+                len(DETAIL_INPUT_HEADERS) + len(DETAIL_OUTPUT_HEADERS) + 1,
+            ))
+            for row in (2, 3)
+        ),
+    )
+
+
+def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row():
+    """Catches pair reordering or loss of candidate results at the workbook boundary."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'manual.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    main = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
+    main_headings = tuple(cell.value for cell in main[1])
+    detail_headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'REVIEW REQUIRED': 1}
+    assert main.cell(2, main_headings.index('Governing Defect ID') + 1).value == 'D-02'
+    assert [detail.cell(row, detail_headings.index('Calculation Status') + 1).value for row in (2, 3)] == [
+        'OK', 'OK',
+    ]
+    assert [detail.cell(row, detail_headings.index('Source Excel Row') + 1).value for row in (2, 3)] == [
+        2, 3,
+    ]
+    assert [detail.cell(row, detail_headings.index('Governing Defect') + 1).value for row in (2, 3)] == [
+        None, 'Yes',
+    ]
+    assert [detail.cell(row, detail_headings.index('Credited Safe Pressure [bar]') + 1).value for row in (2, 3)] == pytest.approx([
+        88.2257484144555, 87.83461911867067,
+    ])
+
+
+def test_partial_detail_with_trimmed_group_invalidates_only_its_manual_owner():
+    """Catches losing the owner ID when a partially populated detail row fails parsing."""
+    source = workbook_bytes_with_rows(
+        [_manual_row(), valid_row_values(**{'Pipe OD [mm]': 508.0})],
+        detail_rows=[detail_values(
+            group='  R-001  ', defect='D-01', length=None, wall=9.0,
+        )],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'partial-detail.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    main = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
+    main_headings = tuple(cell.value for cell in main[1])
+    detail_headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'INPUT ERROR': 1, 'OK': 1}
+    assert main.cell(2, main_headings.index('Error Code') + 1).value.find(
+        'INVALID_INDIVIDUAL_DEFECTS'
+    ) >= 0
+    assert main.cell(3, main_headings.index('Calculation Status') + 1).value == 'OK'
+    assert detail.cell(2, detail_headings.index('Calculation Status') + 1).value == (
+        'INPUT ERROR'
+    )
+    assert 'REQUIRED_VALUE' in detail.cell(
+        2, detail_headings.index('Error Code') + 1,
+    ).value
+
+
+def test_invalid_orphan_detail_remains_local_and_does_not_block_main_rows():
+    """Catches an unowned detail error leaking into an unrelated repair result."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values()],
+        detail_rows=[detail_values(
+            group='ORPHAN', defect='D-X', length=None, wall=4.0,
+        )],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'orphan-detail.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'OK': 1}
+    assert detail.cell(2, headings.index('Calculation Status') + 1).value == 'INPUT ERROR'
+    assert set(detail.cell(2, headings.index('Error Code') + 1).value.split('; ')) == {
+        'REQUIRED_VALUE', 'ORPHAN_REPAIR_GROUP',
+    }
+
+
+def test_processed_manual_workbook_reuploads_without_changing_results():
+    """Catches trusting stale outputs or changing linked tuple order on re-upload."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    first = process_workbook(source, FIXED_TIME, 'manual.xlsx')
+    second = process_workbook(first.workbook_bytes, FIXED_TIME, 'manual-processed.xlsx')
+
+    assert _result_signature(second.workbook_bytes) == _result_signature(first.workbook_bytes)
+
+
+def test_manual_system_error_marks_details_without_breaking_row_continuation(
+    monkeypatch,
+):
+    """Catches strict candidate mapping turning a row-local failure into a batch crash."""
+    import workbook_processor
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError('controlled test failure')
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', explode)
+    source = workbook_bytes_with_rows(
+        [_manual_row(), valid_row_values()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'system-error.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'SYSTEM ERROR': 2}
+    assert [detail.cell(row, headings.index('Calculation Status') + 1).value for row in (2, 3)] == [
+        'INPUT ERROR', 'INPUT ERROR',
+    ]
+    assert [detail.cell(row, headings.index('Error Code') + 1).value for row in (2, 3)] == [
+        'MAIN_ROW_NOT_CALCULATED', 'MAIN_ROW_NOT_CALCULATED',
+    ]
 
 
 def _capture_successful_mechanisms(monkeypatch):
@@ -95,7 +308,12 @@ def test_legacy_dent_is_canonical_through_preview_processing_and_reupload(monkey
     assert second_workbook['Batch Input & Results']['F2'].value == 'Dent w/crack'
     assert second_workbook['Cost Calculation']['F6'].value == 'Dent w/crack'
     assert first_workbook['Batch Input & Results']['A2'].value == 457.2
-    assert first_workbook['Batch Input & Results']['R2'].value == 300.0
+    main_headings = tuple(
+        cell.value for cell in first_workbook['Batch Input & Results'][1]
+    )
+    assert first_workbook['Batch Input & Results'].cell(
+        2, main_headings.index('Prowrap CF Cloth Width [mm]') + 1,
+    ).value == 300.0
     assert first_workbook['Batch Information']['B3'].value == 'Batch Customer'
     assert [second_workbook['Cost Calculation'][address].value for address in (
         'B3', 'E3', 'H3',
@@ -147,7 +365,8 @@ def test_missing_batch_information_is_a_workbook_error():
 
 
 @pytest.mark.parametrize('worksheet', [
-    'Batch Information', 'Batch Input & Results', 'Summary', 'Instructions', 'Lists',
+    'Batch Information', 'Batch Input & Results', 'Individual Defects',
+    'Summary', 'Instructions', 'Lists',
 ])
 def test_missing_required_worksheet_is_a_workbook_error(worksheet):
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
@@ -613,6 +832,27 @@ def test_exactly_500_controlled_rows_remain_valid():
     assert inspection.workbook_errors == ()
 
 
+def test_exactly_2000_detail_rows_are_kept_and_first_row_beyond_is_rejected():
+    """Catches an off-by-one detail bound or an unbounded detail scan."""
+    exact = workbook_bytes_with_rows(
+        [valid_row_values()],
+        detail_rows=[
+            detail_values(group='ORPHAN', defect=f'D-{index}', length=10, wall=4.0)
+            for index in range(MAX_DETAIL_ROWS)
+        ],
+    )
+    assert inspect_workbook(exact).workbook_errors == ()
+
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Individual Defects'].cell(MAX_DETAIL_ROWS + 2, 1).value = 'ORPHAN'
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'DETAIL_ROW_OUT_OF_RANGE',
+    ]
+    assert f'A{MAX_DETAIL_ROWS + 2}' in inspection.workbook_errors[0].message
+
+
 def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
     source = workbook_bytes_with_rows([
         valid_row_values(),
@@ -630,11 +870,15 @@ def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
         _workbook(source)['Batch Input & Results'].cell(3, column).value
         for column in range(1, len(INPUT_HEADERS) + 1)
     ]
-    assert data['T2'].value == 'OK'
-    assert data['T3'].value == 'INPUT ERROR'
-    assert data['U3'].value == 'OUT_OF_RANGE'
-    assert 'Remaining Wall [mm]' in data['V3'].value
-    assert data['T4'].value == 'OK'
+    headings = tuple(cell.value for cell in data[1])
+    status_column = headings.index('Calculation Status') + 1
+    error_code_column = headings.index('Error Code') + 1
+    error_message_column = headings.index('Error Message') + 1
+    assert data.cell(2, status_column).value == 'OK'
+    assert data.cell(3, status_column).value == 'INPUT ERROR'
+    assert data.cell(3, error_code_column).value == 'OUT_OF_RANGE'
+    assert 'Remaining Wall [mm]' in data.cell(3, error_message_column).value
+    assert data.cell(4, status_column).value == 'OK'
 
 
 def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
@@ -649,8 +893,10 @@ def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
     data = workbook['Batch Input & Results']
     warnings = workbook['Warnings']
 
-    assert data['W2'].value == 'W018'
-    assert data['W3'].value == 'W018'
+    headings = tuple(cell.value for cell in data[1])
+    warning_column = headings.index('Compliance Warnings') + 1
+    assert data.cell(2, warning_column).value == 'W018'
+    assert data.cell(3, warning_column).value == 'W018'
     assert warnings['A4'].value == 'W018'
     assert '300 mm or 500 mm' in warnings['B4'].value
     assert warnings['C4'].value == '2, 3'
@@ -687,30 +933,29 @@ def test_processed_warning_register_remains_filterable_while_protected():
 
 def test_previous_five_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the previous template."""
-    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
-    del workbook['Cost Calculation']
-    del workbook['Warnings']
-
-    inspection = inspect_workbook(_saved(workbook))
-    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    source = legacy_workbook_bytes_with_rows(
+        [valid_row_values()], sheet_count=5,
+    )
+    inspection = inspect_workbook(source)
+    result = process_workbook(source, processed_at=FIXED_TIME)
 
     assert inspection.workbook_errors == ()
     assert _workbook(result.workbook_bytes).sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Cost Calculation', 'Warnings',
-        'Summary', 'Instructions', 'Lists',
+        'Batch Information', 'Batch Input & Results', 'Individual Defects',
+        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
 
 
 def test_previous_six_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the warning-register template."""
-    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
-    del workbook['Cost Calculation']
-
-    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    source = legacy_workbook_bytes_with_rows(
+        [valid_row_values()], sheet_count=6,
+    )
+    result = process_workbook(source, processed_at=FIXED_TIME)
 
     assert _workbook(result.workbook_bytes).sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
-        'Warnings', 'Summary', 'Instructions', 'Lists',
+        'Batch Information', 'Batch Input & Results', 'Individual Defects',
+        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
 
 
@@ -723,14 +968,12 @@ def test_processed_cost_sheet_maps_requested_values_and_formulas():
     workbook = _workbook(result.workbook_bytes)
     source = workbook['Batch Input & Results']
     cost = workbook['Cost Calculation']
-    expected_source_columns = (
-        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'R',
-        'AC', 'AJ', 'AK', 'AR', 'AS', 'AT', 'AU', 'AV',
-    )
+    source_headings = tuple(cell.value for cell in source[1])
 
     assert tuple(cell.value for cell in cost[5]) == COST_TABLE_HEADERS
     assert [cost.cell(6, column).value for column in range(1, 21)] == [
-        source[f'{column}2'].value for column in expected_source_columns
+        source.cell(2, source_headings.index(header) + 1).value
+        for header in COST_SOURCE_HEADERS
     ]
     assert cost['U6'].value == cost_formula(6)
     assert cost['V6'].value == price_formula(6)
@@ -751,9 +994,11 @@ def test_uploaded_cost_table_values_are_never_trusted():
     regenerated = _workbook(second.workbook_bytes)
 
     assert regenerated['Cost Calculation']['A6'].value == 457.2
-    assert regenerated['Cost Calculation']['S6'].value == (
-        regenerated['Batch Input & Results']['AU2'].value
-    )
+    main = regenerated['Batch Input & Results']
+    headings = tuple(cell.value for cell in main[1])
+    assert regenerated['Cost Calculation']['S6'].value == main.cell(
+        2, headings.index(COST_SOURCE_HEADERS[18]) + 1,
+    ).value
 
 
 def test_processed_cost_sheet_uses_one_compact_row_per_populated_defect():
@@ -837,9 +1082,13 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     summary = workbook['Summary']
 
     assert result.status_counts == {'NOT REPAIRABLE': 1}
-    assert data['T2'].value == 'NOT REPAIRABLE'
-    assert data['AY2'].value.startswith('{')
-    assert data['AY2'].value == _stable_json(data['AY2'].value)
+    headings = tuple(cell.value for cell in data[1])
+    assert data.cell(2, headings.index('Calculation Status') + 1).value == (
+        'NOT REPAIRABLE'
+    )
+    detail_json = data.cell(2, headings.index('Type B Detail') + 1).value
+    assert detail_json.startswith('{')
+    assert detail_json == _stable_json(detail_json)
     assert summary['B3'].value == 'Batch Customer'
     assert summary['B4'].value == 'Batch Location'
     assert summary['B5'].value == 'B-001'

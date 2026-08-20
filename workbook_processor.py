@@ -24,18 +24,30 @@ try:  # openpyxl uses lxml when it is available.
 except ImportError:  # pragma: no cover - exercised where lxml is unavailable.
     XMLSyntaxError = ParseError
 
-from batch_adapter import RowCalculation, calculate_row
+from batch_adapter import CandidateCalculation, RowCalculation, calculate_row
+from batch_corrosion import ManualGroupLinks, link_manual_groups
 from batch_mechanisms import normalize_upload_mechanism
 from batch_schema import (
+    DETAIL_INPUT_HEADERS,
+    DETAIL_OUTPUT_HEADERS,
     INPUT_HEADERS,
+    LEGACY_INPUT_HEADERS,
+    LEGACY_OUTPUT_HEADERS,
+    MAX_DETAIL_ROWS,
     MAX_ROWS,
     MAX_UPLOAD_BYTES,
     OUTPUT_HEADERS,
     BatchInfo,
+    ValidatedIndividualDefectRow,
+    ValidatedRow,
     ValidationIssue,
 )
 from batch_status import CalculationStatus
-from batch_validation import validate_batch_info, validate_row
+from batch_validation import (
+    validate_batch_info,
+    validate_individual_defect_row,
+    validate_row,
+)
 from cost_calculation import (
     COST_FIRST_DATA_ROW,
     COST_INPUTS,
@@ -47,6 +59,7 @@ from cost_calculation import (
 )
 from workbook_template import create_template_workbook
 from warning_catalog import warning_meaning
+from engine.corrosion_defects import ACTUAL_DEFECT_LENGTH, ENTER_MANUALLY
 
 
 BATCH_ENGINE_VERSION = '1.2.0'
@@ -67,9 +80,19 @@ _PREVIOUS_SHEETS = (
     'Instructions',
     'Lists',
 )
+_LEGACY_COST_SHEETS = (
+    'Batch Information',
+    'Batch Input & Results',
+    'Cost Calculation',
+    'Warnings',
+    'Summary',
+    'Instructions',
+    'Lists',
+)
 _CURRENT_SHEETS = (
     'Batch Information',
     'Batch Input & Results',
+    'Individual Defects',
     'Cost Calculation',
     'Warnings',
     'Summary',
@@ -81,9 +104,9 @@ _MAX_ZIP_ENTRIES = 250
 _MAX_ZIP_UNCOMPRESSED_BYTES = 25 * 1024 * 1024
 _MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
 _MAX_ZIP_COMPRESSION_RATIO = 100
-# A fully populated controlled workbook emits roughly 37,000 worksheet cell
-# elements. This total-workbook ceiling leaves more than 2.5x headroom while
-# bounding the number of Python cell objects openpyxl may materialize.
+# The blank eight-sheet v1.2 template emits 70,679 worksheet cell elements.
+# This ceiling leaves more than 40 percent headroom while bounding the number
+# of Python cell objects openpyxl may materialize.
 _MAX_WORKBOOK_CELLS = 100_000
 _SPREADSHEETML_MAIN_NAMESPACES = frozenset({
     'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
@@ -109,6 +132,43 @@ class WorkbookInspection:
     recognized_input_headers: tuple[str, ...]
     missing_input_headers: tuple[str, ...]
     unexpected_headers: tuple[str, ...]
+    populated_detail_rows: int
+    manual_groups: int
+    recognized_detail_input_headers: tuple[str, ...]
+    missing_detail_input_headers: tuple[str, ...]
+    unexpected_detail_headers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorkbookContract:
+    """One exact upload contract accepted by the v1.2 processor."""
+
+    sheet_order: tuple[str, ...]
+    input_headers: tuple[str, ...]
+    output_headers: tuple[str, ...]
+    has_individual_defects: bool
+    is_legacy: bool
+
+
+@dataclass(frozen=True)
+class _PreparedRows:
+    main_values: tuple[tuple[int, dict[str, object]], ...]
+    main_rows: dict[int, ValidatedRow]
+    main_issues: dict[int, tuple[ValidationIssue, ...]]
+    detail_values: tuple[tuple[int, dict[str, object]], ...]
+    detail_rows: dict[int, ValidatedIndividualDefectRow]
+    detail_issues: dict[int, tuple[ValidationIssue, ...]]
+    links: ManualGroupLinks
+
+
+_LEGACY_CONTRACTS = tuple(
+    WorkbookContract(order, LEGACY_INPUT_HEADERS, LEGACY_OUTPUT_HEADERS, False, True)
+    for order in (_LEGACY_SHEETS, _PREVIOUS_SHEETS, _LEGACY_COST_SHEETS)
+)
+_CURRENT_CONTRACT = WorkbookContract(
+    _CURRENT_SHEETS, INPUT_HEADERS, OUTPUT_HEADERS, True, False,
+)
+_ACCEPTED_CONTRACTS = _LEGACY_CONTRACTS + (_CURRENT_CONTRACT,)
 
 
 @dataclass(frozen=True)
@@ -136,9 +196,13 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
 
     assert workbook is not None
     header_summary = _input_header_summary(workbook)
-    structure_errors = _validate_structure(workbook)
+    detail_header_summary = _detail_input_header_summary(workbook)
+    contract, structure_errors = _validate_structure(workbook)
     if structure_errors:
-        return _empty_inspection(structure_errors, header_summary)
+        return _empty_inspection(
+            structure_errors, header_summary, detail_header_summary,
+        )
+    assert contract is not None
 
     info_sheet = workbook['Batch Information']
     common_values = {
@@ -147,27 +211,45 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
     }
     formula_errors = _formula_errors(workbook)
     if formula_errors:
-        return _empty_inspection(formula_errors, header_summary)
+        return _empty_inspection(
+            formula_errors, header_summary, detail_header_summary,
+        )
     commercial_input_errors = _commercial_input_errors(workbook)
     if commercial_input_errors:
-        return _empty_inspection(commercial_input_errors, header_summary)
+        return _empty_inspection(
+            commercial_input_errors, header_summary, detail_header_summary,
+        )
 
     batch_info, batch_issues = validate_batch_info(common_values)
     data_sheet = workbook['Batch Input & Results']
-    out_of_range_errors = _out_of_range_input_errors(data_sheet)
-    if out_of_range_errors:
-        return _empty_inspection(out_of_range_errors, header_summary)
-    populated = _populated_rows(data_sheet)
-    row_limit_errors = (
-        (_issue('TOO_MANY_ROWS', f'No more than {MAX_ROWS} populated defect rows are allowed.'),)
-        if len(populated) > MAX_ROWS else ()
+    out_of_range_errors = _out_of_range_input_errors(
+        data_sheet, contract.input_headers,
     )
+    if out_of_range_errors:
+        return _empty_inspection(
+            out_of_range_errors, header_summary, detail_header_summary,
+        )
+    if contract.has_individual_defects:
+        detail_range_errors = _out_of_range_input_errors(
+            workbook['Individual Defects'],
+            DETAIL_INPUT_HEADERS,
+            max_rows=MAX_DETAIL_ROWS,
+            code='DETAIL_ROW_OUT_OF_RANGE',
+            label='Individual Defects input values',
+        )
+        if detail_range_errors:
+            return _empty_inspection(
+                detail_range_errors, header_summary, detail_header_summary,
+            )
+
+    prepared = _prepare_rows(workbook, contract)
 
     valid_rows = 0
     invalid_rows = 0
     preview: list[dict[str, object]] = []
-    for excel_row, values in populated:
-        row, issues = validate_row(excel_row, values)
+    for excel_row, values in prepared.main_values:
+        row = prepared.main_rows.get(excel_row)
+        issues = prepared.main_issues.get(excel_row, ())
         if issues:
             invalid_rows += 1
             status = CalculationStatus.INPUT_ERROR.value
@@ -180,7 +262,14 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
             error_message = ''
         else:
             valid_rows += 1
-            calculation = _calculate_one(batch_info, excel_row, values)
+            calculation = _calculate_one(
+                batch_info,
+                excel_row,
+                values,
+                individual_defects=prepared.links.defects_by_main_excel_row.get(
+                    excel_row, (),
+                ),
+            )
             status = calculation.status.value
             error_code = calculation.error_code
             error_message = calculation.error_message
@@ -192,6 +281,8 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
                     row.values['Mechanism'] if row is not None else values['Mechanism']
                 ),
                 'Defect Location': values['Defect Location'],
+                'Defect Length Basis': values['Defect Length Basis'],
+                'Repair Group ID': values['Repair Group ID'],
                 'Calculation Status': status,
                 'Error Code': error_code,
                 'Error Message': error_message,
@@ -199,14 +290,23 @@ def inspect_workbook(data: bytes) -> WorkbookInspection:
 
     return WorkbookInspection(
         batch_info=batch_info,
-        populated_rows=len(populated),
+        populated_rows=len(prepared.main_values),
         valid_rows=valid_rows,
         invalid_rows=invalid_rows,
-        workbook_errors=tuple(batch_issues) + row_limit_errors,
+        workbook_errors=tuple(batch_issues),
         preview=tuple(preview),
         recognized_input_headers=header_summary[0],
         missing_input_headers=header_summary[1],
         unexpected_headers=header_summary[2],
+        populated_detail_rows=len(prepared.detail_values),
+        manual_groups=len({
+            row.values['Repair Group ID']
+            for row in prepared.main_rows.values()
+            if row.values.get('Defect Length Basis') == ENTER_MANUALLY
+        }),
+        recognized_detail_input_headers=detail_header_summary[0],
+        missing_detail_input_headers=detail_header_summary[1],
+        unexpected_detail_headers=detail_header_summary[2],
     )
 
 
@@ -225,15 +325,66 @@ def process_workbook(
     if load_errors or workbook is None:  # Defensive: bytes were just inspected.
         raise WorkbookProcessingError(load_errors)
 
+    contract, structure_errors = _validate_structure(workbook)
+    if structure_errors or contract is None:  # Defensive: bytes were just inspected.
+        raise WorkbookProcessingError(structure_errors)
+
     output_workbook = load_workbook(BytesIO(create_template_workbook()), data_only=False)
-    _copy_controlled_inputs(workbook, output_workbook)
+    _copy_controlled_inputs(workbook, output_workbook, contract)
+    prepared = _prepare_rows(output_workbook, _CURRENT_CONTRACT)
     data_sheet = output_workbook['Batch Input & Results']
+    detail_sheet = output_workbook['Individual Defects']
     status_counts: Counter[str] = Counter()
     processed_timestamp = _utc_timestamp(processed_at)
-    for excel_row, values in _populated_rows(data_sheet):
-        calculation = _calculate_one(inspection.batch_info, excel_row, values)
+    calculations: dict[int, RowCalculation] = {}
+    for excel_row, values in prepared.main_values:
+        issues = prepared.main_issues.get(excel_row, ())
+        if issues:
+            calculation = _input_error_calculation(excel_row, issues)
+        else:
+            calculation = _calculate_one(
+                inspection.batch_info,
+                excel_row,
+                values,
+                individual_defects=prepared.links.defects_by_main_excel_row.get(
+                    excel_row, (),
+                ),
+            )
+        calculations[excel_row] = calculation
         _write_result_row(data_sheet, excel_row, calculation, processed_timestamp)
         status_counts[calculation.status.value] += 1
+
+    candidate_by_detail_row: dict[int, CandidateCalculation] = {}
+    for main_excel_row, detail_rows in prepared.links.detail_rows_by_main_excel_row.items():
+        calculation = calculations.get(main_excel_row)
+        if calculation is None or prepared.main_issues.get(main_excel_row):
+            continue
+        if len(calculation.candidate_calculations) != len(detail_rows):
+            continue
+        candidate_by_detail_row.update({
+            detail_row.source_excel_row: candidate
+            for detail_row, candidate in zip(
+                detail_rows, calculation.candidate_calculations, strict=True,
+            )
+        })
+
+    for detail_excel_row, _ in prepared.detail_values:
+        issues = prepared.detail_issues.get(detail_excel_row, ())
+        candidate = candidate_by_detail_row.get(detail_excel_row)
+        if not issues and candidate is None:
+            linked_main_row = _linked_main_row_for_detail(
+                detail_excel_row, prepared.links,
+            )
+            if linked_main_row is not None:
+                issues = prepared.main_issues.get(linked_main_row, ())
+            if not issues:
+                issues = (_issue(
+                    'MAIN_ROW_NOT_CALCULATED',
+                    'The linked main repair row could not produce this detail assessment.',
+                ),)
+        _write_detail_result_row(
+            detail_sheet, detail_excel_row, issues=issues, candidate=candidate,
+        )
 
     _write_cost_sheet(output_workbook)
     _write_warnings_sheet(output_workbook)
@@ -283,41 +434,84 @@ def _load_controlled_workbook(data: bytes):
         return None, (_issue('UNREADABLE_WORKBOOK', 'The uploaded file is not a readable .xlsx workbook.'),)
 
 
-def _validate_structure(workbook) -> tuple[ValidationIssue, ...]:
+def _validate_structure(
+    workbook,
+) -> tuple[WorkbookContract | None, tuple[ValidationIssue, ...]]:
     missing = [sheet for sheet in _LEGACY_SHEETS if sheet not in workbook.sheetnames]
     if missing:
-        return (_issue('MISSING_WORKSHEET', f'Missing required worksheet: {missing[0]}.'),)
+        return None, (_issue('MISSING_WORKSHEET', f'Missing required worksheet: {missing[0]}.'),)
     extras = [sheet for sheet in workbook.sheetnames if sheet not in _CURRENT_SHEETS]
     if extras:
-        return (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
-    if tuple(workbook.sheetnames) not in {
-        _LEGACY_SHEETS, _PREVIOUS_SHEETS, _CURRENT_SHEETS,
-    }:
-        return (_issue('INVALID_WORKSHEET_ORDER', 'Worksheets do not match the controlled template order.'),)
+        return None, (_issue('UNEXPECTED_WORKSHEET', f'Unexpected worksheet: {extras[0]}.'),)
+
+    sheet_order = tuple(workbook.sheetnames)
+    contract = next(
+        (item for item in _ACCEPTED_CONTRACTS if item.sheet_order == sheet_order),
+        None,
+    )
+    headings = tuple(cell.value for cell in workbook['Batch Input & Results'][1])
+    if (
+        contract is not None
+        and contract.is_legacy
+        and headings == INPUT_HEADERS + OUTPUT_HEADERS
+    ):
+        return None, (_issue(
+            'MISSING_WORKSHEET',
+            'Missing required worksheet: Individual Defects.',
+        ),)
+    if contract is None:
+        if headings == INPUT_HEADERS + OUTPUT_HEADERS:
+            missing_current = [
+                sheet for sheet in _CURRENT_SHEETS if sheet not in workbook.sheetnames
+            ]
+            if missing_current:
+                return None, (_issue(
+                    'MISSING_WORKSHEET',
+                    f'Missing required worksheet: {missing_current[0]}.',
+                ),)
+        return None, (_issue(
+            'INVALID_WORKSHEET_ORDER',
+            'Worksheets do not match a controlled legacy or current template order.',
+        ),)
 
     info_sheet = workbook['Batch Information']
     common_headers = tuple(info_sheet.cell(row, 1).value for row in range(3, 6))
     if common_headers != _COMMON_HEADERS:
-        return (_issue(
+        return None, (_issue(
             'INVALID_BATCH_INFORMATION_LABELS',
             'Batch Information must contain Customer, Project Location, and Report No labels.',
         ),)
 
-    headings = tuple(cell.value for cell in workbook['Batch Input & Results'][1])
-    expected = INPUT_HEADERS + OUTPUT_HEADERS
+    expected = contract.input_headers + contract.output_headers
     duplicate = _first_duplicate(headings)
     if duplicate:
-        return (_issue('DUPLICATE_INPUT_HEADER', f'Duplicate workbook heading: {duplicate}.'),)
+        return None, (_issue('DUPLICATE_INPUT_HEADER', f'Duplicate workbook heading: {duplicate}.'),)
     if headings != expected:
-        return (_issue('INVALID_INPUT_HEADERS', 'Batch Input & Results headings do not match the controlled template.'),)
+        return None, (_issue(
+            'INVALID_INPUT_HEADERS',
+            'Batch Input & Results headings do not match the controlled template.',
+        ),)
+    if contract.has_individual_defects:
+        detail_headings = tuple(cell.value for cell in workbook['Individual Defects'][1])
+        duplicate = _first_duplicate(detail_headings)
+        if duplicate:
+            return None, (_issue(
+                'DUPLICATE_DETAIL_HEADER',
+                f'Duplicate Individual Defects heading: {duplicate}.',
+            ),)
+        if detail_headings != DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS:
+            return None, (_issue(
+                'INVALID_DETAIL_HEADERS',
+                'Individual Defects headings do not match the controlled template.',
+            ),)
     if 'Cost Calculation' in workbook.sheetnames:
         cost_headings = tuple(cell.value for cell in workbook['Cost Calculation'][5])
         if cost_headings != COST_TABLE_HEADERS:
-            return (_issue(
+            return None, (_issue(
                 'INVALID_COST_HEADERS',
                 'Cost Calculation headings do not match the controlled template.',
             ),)
-    return ()
+    return contract, ()
 
 
 def _input_header_summary(workbook) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -329,6 +523,22 @@ def _input_header_summary(workbook) -> tuple[tuple[str, ...], tuple[str, ...], t
     expected = INPUT_HEADERS + OUTPUT_HEADERS
     recognized = tuple(header for header in INPUT_HEADERS if header in headings)
     missing = tuple(header for header in INPUT_HEADERS if header not in headings)
+    unexpected = tuple(
+        _display_heading(heading) for heading in headings if heading not in expected
+    )
+    return recognized, missing, unexpected
+
+
+def _detail_input_header_summary(
+    workbook,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """Return detail-table heading diagnostics independently of main headings."""
+    if 'Individual Defects' not in workbook.sheetnames:
+        return (), DETAIL_INPUT_HEADERS, ()
+    headings = tuple(cell.value for cell in workbook['Individual Defects'][1])
+    expected = DETAIL_INPUT_HEADERS + DETAIL_OUTPUT_HEADERS
+    recognized = tuple(header for header in DETAIL_INPUT_HEADERS if header in headings)
+    missing = tuple(header for header in DETAIL_INPUT_HEADERS if header not in headings)
     unexpected = tuple(
         _display_heading(heading) for heading in headings if heading not in expected
     )
@@ -374,48 +584,210 @@ def _commercial_input_errors(workbook) -> tuple[ValidationIssue, ...]:
     return ()
 
 
-def _populated_rows(worksheet) -> list[tuple[int, dict[str, object]]]:
+def _populated_rows(
+    worksheet,
+    input_headers: tuple[str, ...] = INPUT_HEADERS,
+    *,
+    max_rows: int = MAX_ROWS,
+) -> list[tuple[int, dict[str, object]]]:
     populated: list[tuple[int, dict[str, object]]] = []
-    for excel_row in range(2, MAX_ROWS + 2):
+    for excel_row in range(2, max_rows + 2):
         values = {
             header: worksheet.cell(excel_row, column).value
-            for column, header in enumerate(INPUT_HEADERS, start=1)
+            for column, header in enumerate(input_headers, start=1)
         }
         if any(not _is_blank(value) for value in values.values()):
             populated.append((excel_row, values))
     return populated
 
 
-def _out_of_range_input_errors(worksheet) -> tuple[ValidationIssue, ...]:
+def _out_of_range_input_errors(
+    worksheet,
+    input_headers: tuple[str, ...] = INPUT_HEADERS,
+    *,
+    max_rows: int = MAX_ROWS,
+    code: str = 'INPUT_ROW_OUT_OF_RANGE',
+    label: str = 'Input values',
+) -> tuple[ValidationIssue, ...]:
     for (excel_row, column), cell in _loaded_cells(worksheet):
         if (
-            excel_row >= MAX_ROWS + 2
-            and column <= len(INPUT_HEADERS)
+            excel_row >= max_rows + 2
+            and column <= len(input_headers)
             and not _is_blank(cell.value)
         ):
             return (_issue(
-                'INPUT_ROW_OUT_OF_RANGE',
-                f'Input values are allowed only in rows 2 through {MAX_ROWS + 1}: {cell.coordinate}.',
+                code,
+                f'{label} are allowed only in rows 2 through {max_rows + 1}: {cell.coordinate}.',
             ),)
     return ()
+
+
+def _prepare_rows(workbook, contract: WorkbookContract) -> _PreparedRows:
+    main_values = tuple(_normalized_main_rows(workbook, contract))
+    main_rows: dict[int, ValidatedRow] = {}
+    main_issues: dict[int, tuple[ValidationIssue, ...]] = {}
+    for excel_row, values in main_values:
+        row, issues = validate_row(excel_row, values)
+        if row is not None:
+            main_rows[excel_row] = row
+        if issues:
+            main_issues[excel_row] = issues
+
+    detail_values: tuple[tuple[int, dict[str, object]], ...] = ()
+    detail_rows: dict[int, ValidatedIndividualDefectRow] = {}
+    detail_issues: dict[int, tuple[ValidationIssue, ...]] = {}
+    raw_detail_groups: dict[int, str] = {}
+    if contract.has_individual_defects:
+        detail_values = tuple(_populated_rows(
+            workbook['Individual Defects'],
+            DETAIL_INPUT_HEADERS,
+            max_rows=MAX_DETAIL_ROWS,
+        ))
+        for excel_row, values in detail_values:
+            raw_group = values.get('Repair Group ID')
+            if not _is_blank(raw_group):
+                raw_detail_groups[excel_row] = str(raw_group).strip()
+            row, issues = validate_individual_defect_row(excel_row, values)
+            if row is not None:
+                detail_rows[excel_row] = row
+            if issues:
+                detail_issues[excel_row] = issues
+
+    links = link_manual_groups(
+        tuple(main_rows.values()),
+        tuple(detail_rows.values()),
+        detail_issues,
+    )
+    mutable_main_issues = {
+        row: list(issues) for row, issues in main_issues.items()
+    }
+    for row, issues in links.main_issues.items():
+        mutable_main_issues.setdefault(row, []).extend(issues)
+    mutable_detail_issues = {
+        row: list(issues) for row, issues in links.detail_issues.items()
+    }
+
+    manual_mains_by_group: dict[str, list[int]] = {}
+    for main_row in main_rows.values():
+        if main_row.values.get('Defect Length Basis') == ENTER_MANUALLY:
+            manual_mains_by_group.setdefault(
+                main_row.values['Repair Group ID'], [],
+            ).append(main_row.source_excel_row)
+    for detail_excel_row in detail_issues:
+        group_id = raw_detail_groups.get(detail_excel_row)
+        if not group_id:
+            continue
+        owners = manual_mains_by_group.get(group_id, [])
+        if len(owners) == 1:
+            _append_unique_issue(
+                mutable_main_issues,
+                owners[0],
+                _issue(
+                    'INVALID_INDIVIDUAL_DEFECTS',
+                    f'Repair Group ID {group_id!r} contains invalid individual defect rows.',
+                ),
+            )
+        elif not owners:
+            _append_unique_issue(
+                mutable_detail_issues,
+                detail_excel_row,
+                _issue(
+                    'ORPHAN_REPAIR_GROUP',
+                    f'Repair Group ID {group_id!r} does not link to a manual main row.',
+                ),
+            )
+        else:
+            _append_unique_issue(
+                mutable_detail_issues,
+                detail_excel_row,
+                _issue(
+                    'AMBIGUOUS_REPAIR_GROUP',
+                    f'Repair Group ID {group_id!r} links to multiple manual main rows.',
+                ),
+            )
+
+    merged_main_issues = {
+        row: tuple(_deduplicate_issues(issues))
+        for row, issues in mutable_main_issues.items()
+    }
+    merged_detail_issues = {
+        row: tuple(_deduplicate_issues(issues))
+        for row, issues in mutable_detail_issues.items()
+    }
+    merged_links = ManualGroupLinks(
+        defects_by_main_excel_row=links.defects_by_main_excel_row,
+        detail_rows_by_main_excel_row=links.detail_rows_by_main_excel_row,
+        main_issues=merged_main_issues,
+        detail_issues=merged_detail_issues,
+    )
+    return _PreparedRows(
+        main_values=main_values,
+        main_rows=main_rows,
+        main_issues=merged_main_issues,
+        detail_values=detail_values,
+        detail_rows=detail_rows,
+        detail_issues=merged_detail_issues,
+        links=merged_links,
+    )
+
+
+def _normalized_main_rows(
+    workbook, contract: WorkbookContract,
+) -> list[tuple[int, dict[str, object]]]:
+    source_rows = _populated_rows(
+        workbook['Batch Input & Results'], contract.input_headers,
+    )
+    normalized: list[tuple[int, dict[str, object]]] = []
+    for excel_row, source_values in source_rows:
+        values = {header: source_values.get(header) for header in INPUT_HEADERS}
+        if contract.is_legacy:
+            mechanism = normalize_upload_mechanism(source_values.get('Mechanism'))
+            if (
+                mechanism == 'Corrosion'
+                and source_values.get('Defect Location') == 'External'
+            ):
+                values['Defect Length Basis'] = ACTUAL_DEFECT_LENGTH
+            values['Repair Group ID'] = None
+        normalized.append((excel_row, values))
+    return normalized
+
+
+def _append_unique_issue(
+    issues_by_row: dict[int, list[ValidationIssue]],
+    row_number: int,
+    issue: ValidationIssue,
+) -> None:
+    existing = issues_by_row.setdefault(row_number, [])
+    if issue not in existing:
+        existing.append(issue)
+
+
+def _deduplicate_issues(
+    issues: list[ValidationIssue],
+) -> list[ValidationIssue]:
+    result: list[ValidationIssue] = []
+    for issue in issues:
+        if issue not in result:
+            result.append(issue)
+    return result
 
 
 def _calculate_one(
     batch_info: BatchInfo,
     excel_row: int,
     values: dict[str, object],
+    *,
+    individual_defects=(),
 ) -> RowCalculation:
     row, issues = validate_row(excel_row, values)
     if issues:
-        return RowCalculation(
-            source_excel_row=excel_row,
-            status=CalculationStatus.INPUT_ERROR,
-            outputs={},
-            error_code=_issue_codes(issues),
-            error_message=_issue_message(issues),
-        )
+        return _input_error_calculation(excel_row, issues)
     assert row is not None
     try:
+        if individual_defects:
+            return calculate_row(
+                batch_info, row, individual_defects=tuple(individual_defects),
+            )
         return calculate_row(batch_info, row)
     except Exception as exc:
         frames = ' -> '.join(
@@ -435,6 +807,19 @@ def _calculate_one(
         )
 
 
+def _input_error_calculation(
+    excel_row: int,
+    issues: tuple[ValidationIssue, ...],
+) -> RowCalculation:
+    return RowCalculation(
+        source_excel_row=excel_row,
+        status=CalculationStatus.INPUT_ERROR,
+        outputs={},
+        error_code=_issue_codes(issues),
+        error_message=_issue_message(issues),
+    )
+
+
 def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, timestamp: str) -> None:
     outputs = {
         'Source Excel Row': calculation.source_excel_row,
@@ -448,6 +833,49 @@ def _write_result_row(worksheet, excel_row: int, calculation: RowCalculation, ti
     }
     for column, heading in enumerate(OUTPUT_HEADERS, start=len(INPUT_HEADERS) + 1):
         worksheet.cell(excel_row, column).value = _output_value(heading, outputs.get(heading))
+
+
+def _write_detail_result_row(
+    worksheet,
+    excel_row: int,
+    *,
+    issues: tuple[ValidationIssue, ...],
+    candidate: CandidateCalculation | None,
+) -> None:
+    outputs: dict[str, object] = {
+        'Source Excel Row': excel_row,
+        'Calculation Status': (
+            CalculationStatus.INPUT_ERROR.value if issues else CalculationStatus.OK.value
+        ),
+        'Error Code': _issue_codes(issues),
+        'Error Message': _issue_message(issues),
+    }
+    if candidate is not None and not issues:
+        outputs.update({
+            'B31G Method': candidate.method,
+            'B31G Applicable': candidate.applicable,
+            'B31G Acceptable': candidate.acceptable,
+            'Credited Safe Pressure [bar]': candidate.credited_safe_pressure_bar,
+            'Governing Defect': 'Yes' if candidate.governing else None,
+            'Assessment Warning Codes': candidate.warning_codes,
+        })
+    for column, heading in enumerate(
+        DETAIL_OUTPUT_HEADERS, start=len(DETAIL_INPUT_HEADERS) + 1,
+    ):
+        value = outputs.get(heading)
+        if heading == 'Assessment Warning Codes' and isinstance(value, (tuple, list)):
+            value = ', '.join(str(item) for item in value)
+        worksheet.cell(excel_row, column).value = value
+
+
+def _linked_main_row_for_detail(
+    detail_excel_row: int,
+    links: ManualGroupLinks,
+) -> int | None:
+    for main_excel_row, detail_rows in links.detail_rows_by_main_excel_row.items():
+        if any(row.source_excel_row == detail_excel_row for row in detail_rows):
+            return main_excel_row
+    return None
 
 
 def _write_cost_sheet(workbook) -> None:
@@ -584,8 +1012,14 @@ def _utc_timestamp(value: datetime) -> str:
 def _empty_inspection(
     errors: tuple[ValidationIssue, ...],
     header_summary: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] = ((), (), ()),
+    detail_header_summary: tuple[
+        tuple[str, ...], tuple[str, ...], tuple[str, ...]
+    ] = ((), (), ()),
 ) -> WorkbookInspection:
-    return WorkbookInspection(None, 0, 0, 0, errors, (), *header_summary)
+    return WorkbookInspection(
+        None, 0, 0, 0, errors, (), *header_summary,
+        0, 0, *detail_header_summary,
+    )
 
 
 def _issue(code: str, message: str) -> ValidationIssue:
@@ -740,7 +1174,11 @@ def _xml_expanded_name(tag: object) -> tuple[str, str]:
     return '', tag
 
 
-def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
+def _copy_controlled_inputs(
+    source_workbook,
+    output_workbook,
+    contract: WorkbookContract,
+) -> None:
     source_info = source_workbook['Batch Information']
     output_info = output_workbook['Batch Information']
     for row in range(3, 6):
@@ -748,13 +1186,56 @@ def _copy_controlled_inputs(source_workbook, output_workbook) -> None:
 
     source_data = source_workbook['Batch Input & Results']
     output_data = output_workbook['Batch Input & Results']
-    mechanism_column = INPUT_HEADERS.index('Mechanism') + 1
+    source_columns = {
+        header: column
+        for column, header in enumerate(contract.input_headers, start=1)
+    }
+    output_columns = {
+        header: column for column, header in enumerate(INPUT_HEADERS, start=1)
+    }
     for excel_row in range(2, MAX_ROWS + 2):
-        for column in range(1, len(INPUT_HEADERS) + 1):
-            value = source_data.cell(excel_row, column).value
-            if column == mechanism_column:
+        populated = any(
+            not _is_blank(source_data.cell(excel_row, column).value)
+            for column in source_columns.values()
+        )
+        for header, output_column in output_columns.items():
+            source_column = source_columns.get(header)
+            value = (
+                source_data.cell(excel_row, source_column).value
+                if source_column is not None else None
+            )
+            if header == 'Mechanism':
                 value = normalize_upload_mechanism(value)
-            output_data.cell(excel_row, column).value = value
+            elif contract.is_legacy and header == 'Defect Length Basis':
+                mechanism = normalize_upload_mechanism(
+                    source_data.cell(
+                        excel_row, source_columns['Mechanism'],
+                    ).value
+                )
+                location = source_data.cell(
+                    excel_row, source_columns['Defect Location'],
+                ).value
+                value = (
+                    ACTUAL_DEFECT_LENGTH
+                    if populated and mechanism == 'Corrosion' and location == 'External'
+                    else None
+                )
+            elif contract.is_legacy and header == 'Repair Group ID':
+                value = None
+            output_data.cell(excel_row, output_column).value = value
+
+    if contract.has_individual_defects:
+        source_detail = source_workbook['Individual Defects']
+        output_detail = output_workbook['Individual Defects']
+        source_detail_columns = {
+            header: column
+            for column, header in enumerate(DETAIL_INPUT_HEADERS, start=1)
+        }
+        for excel_row in range(2, MAX_DETAIL_ROWS + 2):
+            for header, source_column in source_detail_columns.items():
+                output_detail.cell(excel_row, source_column).value = source_detail.cell(
+                    excel_row, source_column,
+                ).value
 
     if 'Cost Calculation' in source_workbook.sheetnames:
         source_cost = source_workbook['Cost Calculation']

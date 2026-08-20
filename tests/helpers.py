@@ -78,13 +78,26 @@ def valid_detail_row(
     return row
 
 
-def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
+def detail_values(
+    *, group='R-001', defect='D-01', length=10.0, wall=4.5,
+    separation='Yes',
+):
+    return {
+        'Repair Group ID': group,
+        'Defect ID': defect,
+        'Individual longitudinal length [mm]': length,
+        'Remaining wall [mm]': wall,
+        'Separation exceeds 3t': separation,
+    }
+
+
+def workbook_bytes_with_rows(rows, *, detail_rows=(), commercial_inputs=None):
     """Create a controlled template populated with test defect rows."""
     from io import BytesIO
 
     from openpyxl import load_workbook
 
-    from batch_schema import INPUT_HEADERS
+    from batch_schema import DETAIL_INPUT_HEADERS, INPUT_HEADERS
     from workbook_template import create_template_workbook
 
     workbook = load_workbook(BytesIO(create_template_workbook()))
@@ -96,10 +109,36 @@ def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
     for excel_row, values in enumerate(rows, start=2):
         for column, header in enumerate(INPUT_HEADERS, start=1):
             data.cell(excel_row, column, values.get(header))
+    detail = workbook['Individual Defects']
+    for excel_row, values in enumerate(detail_rows, start=2):
+        for column, header in enumerate(DETAIL_INPUT_HEADERS, start=1):
+            detail.cell(excel_row, column, values.get(header))
     if commercial_inputs:
         cost = workbook['Cost Calculation']
         for address, value in commercial_inputs.items():
             cost[address] = value
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def legacy_workbook_bytes_with_rows(rows, *, sheet_count=7):
+    """Create an exact controlled pre-v1.2 workbook in a supported layout."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from batch_schema import LEGACY_INPUT_HEADERS, LEGACY_OUTPUT_HEADERS
+
+    workbook = load_workbook(BytesIO(workbook_bytes_with_rows(rows)))
+    del workbook['Individual Defects']
+    if sheet_count < 7:
+        del workbook['Cost Calculation']
+    if sheet_count < 6:
+        del workbook['Warnings']
+    main = workbook['Batch Input & Results']
+    main.delete_cols(9, 2)
+    main.delete_cols(len(LEGACY_INPUT_HEADERS) + len(LEGACY_OUTPUT_HEADERS) + 1, 6)
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
