@@ -165,3 +165,20 @@ def warning_meaning(code: str) -> str:
         return _DEFINITIONS_BY_CODE[code].meaning
     except KeyError as error:
         raise UnmappedWarningError(f'Unknown warning code: {code}') from error
+
+
+def format_affected_rows(
+    main_rows: Iterable[int], detail_rows: Iterable[int],
+) -> str:
+    """Format compact, source-sheet-aware warning locations for the register."""
+    main = tuple(sorted(set(main_rows)))
+    detail = tuple(sorted(set(detail_rows)))
+    main_text = ', '.join(str(row) for row in main)
+    detail_text = ', '.join(str(row) for row in detail)
+    if not detail:
+        return main_text
+    sections = []
+    if main_text:
+        sections.append(f'Main {main_text}')
+    sections.append(f'Individual Defects {detail_text}')
+    return '; '.join(sections)

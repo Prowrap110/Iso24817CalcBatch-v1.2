@@ -23,6 +23,8 @@ def valid_row_values(**overrides):
         'Mechanism': 'Corrosion',
         'Defect Location': 'External',
         'Defect Length [mm]': 100.0,
+        'Defect Length Basis': 'Actual defect length',
+        'Repair Group ID': None,
         'Remaining Wall [mm]': 4.5,
         'Internal Corrosion Rate [mm/year]': None,
         'Design Life [years]': 20,
@@ -35,6 +37,11 @@ def valid_row_values(**overrides):
         'Prowrap CF Cloth Width [mm]': 300.0,
     }
     values.update(overrides)
+    if (
+        values['Mechanism'] != 'Corrosion'
+        or values['Defect Location'] != 'External'
+    ) and 'Defect Length Basis' not in overrides:
+        values['Defect Length Basis'] = None
     return values
 
 
@@ -53,13 +60,44 @@ def validated_row(**overrides):
     return row
 
 
-def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
+def valid_detail_row(
+    excel_row, *, group='R-001', defect='D-01', length=10.0, wall=4.5,
+    separation='Yes',
+):
+    from batch_validation import validate_individual_defect_row
+
+    row, issues = validate_individual_defect_row(excel_row, {
+        'Repair Group ID': group,
+        'Defect ID': defect,
+        'Individual longitudinal length [mm]': length,
+        'Remaining wall [mm]': wall,
+        'Separation exceeds 3t': separation,
+    })
+    assert issues == ()
+    assert row is not None
+    return row
+
+
+def detail_values(
+    *, group='R-001', defect='D-01', length=10.0, wall=4.5,
+    separation='Yes',
+):
+    return {
+        'Repair Group ID': group,
+        'Defect ID': defect,
+        'Individual longitudinal length [mm]': length,
+        'Remaining wall [mm]': wall,
+        'Separation exceeds 3t': separation,
+    }
+
+
+def workbook_bytes_with_rows(rows, *, detail_rows=(), commercial_inputs=None):
     """Create a controlled template populated with test defect rows."""
     from io import BytesIO
 
     from openpyxl import load_workbook
 
-    from batch_schema import INPUT_HEADERS
+    from batch_schema import DETAIL_INPUT_HEADERS, INPUT_HEADERS
     from workbook_template import create_template_workbook
 
     workbook = load_workbook(BytesIO(create_template_workbook()))
@@ -71,6 +109,10 @@ def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
     for excel_row, values in enumerate(rows, start=2):
         for column, header in enumerate(INPUT_HEADERS, start=1):
             data.cell(excel_row, column, values.get(header))
+    detail = workbook['Individual Defects']
+    for excel_row, values in enumerate(detail_rows, start=2):
+        for column, header in enumerate(DETAIL_INPUT_HEADERS, start=1):
+            detail.cell(excel_row, column, values.get(header))
     if commercial_inputs:
         cost = workbook['Cost Calculation']
         for address, value in commercial_inputs.items():
@@ -78,3 +120,68 @@ def workbook_bytes_with_rows(rows, *, commercial_inputs=None):
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def legacy_workbook_bytes_with_rows(
+    rows, *, sheet_count=7, former_cost_contract=False,
+):
+    """Create an exact controlled pre-v1.2 workbook in a supported layout."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from batch_schema import LEGACY_INPUT_HEADERS, LEGACY_OUTPUT_HEADERS
+
+    workbook = load_workbook(BytesIO(workbook_bytes_with_rows(rows)))
+    del workbook['Individual Defects']
+    if sheet_count < 7:
+        del workbook['Cost Calculation']
+    if sheet_count < 6:
+        del workbook['Warnings']
+    main = workbook['Batch Input & Results']
+    main.delete_cols(9, 2)
+    for column, header in enumerate(
+        LEGACY_INPUT_HEADERS + LEGACY_OUTPUT_HEADERS, start=1,
+    ):
+        main.cell(1, column).value = header
+    if former_cost_contract:
+        _freeze_former_cost_contract(workbook)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def historical_v12_workbook_bytes_with_rows(rows, *, former_cost_contract=False):
+    """Create the former wide eight-sheet v1.2 contract for upgrade tests."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from batch_schema import HISTORICAL_V12_OUTPUT_HEADERS, INPUT_HEADERS
+
+    workbook = load_workbook(BytesIO(workbook_bytes_with_rows(rows)))
+    main = workbook['Batch Input & Results']
+    for column, header in enumerate(
+        INPUT_HEADERS + HISTORICAL_V12_OUTPUT_HEADERS, start=1,
+    ):
+        main.cell(1, column).value = header
+    if former_cost_contract:
+        _freeze_former_cost_contract(workbook)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _freeze_former_cost_contract(workbook) -> None:
+    """Make a faithful processed Cost sheet from before Quantity existed."""
+    from cost_calculation import cost_formula, price_formula
+
+    cost = workbook['Cost Calculation']
+    cost.unmerge_cells('A1:X1')
+    cost.merge_cells('A1:V1')
+    cost.delete_cols(23, 2)
+    table = cost.tables['CostRows']
+    table.ref = 'A5:V6'
+    table.autoFilter.ref = table.ref
+    cost['U6'] = cost_formula(6)
+    cost['V6'] = price_formula(6)

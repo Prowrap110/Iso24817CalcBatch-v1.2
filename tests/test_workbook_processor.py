@@ -1,19 +1,41 @@
 from datetime import UTC, datetime
 from io import BytesIO
+import math
 import zipfile
 
 import pytest
+import cost_calculation
 from openpyxl import load_workbook
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 from batch_adapter import RowCalculation
-from batch_schema import INPUT_HEADERS, MAX_ROWS, MAX_UPLOAD_BYTES, OUTPUT_HEADERS
+from batch_schema import (
+    DETAIL_INPUT_HEADERS,
+    DETAIL_OUTPUT_HEADERS,
+    INPUT_HEADERS,
+    MAX_DETAIL_ROWS,
+    MAX_ROWS,
+    MAX_UPLOAD_BYTES,
+    OUTPUT_HEADERS,
+)
 from batch_status import CalculationStatus
-from cost_calculation import COST_TABLE_HEADERS, cost_formula, price_formula
-from tests.helpers import valid_row_values, workbook_bytes_with_rows
+from cost_calculation import (
+    COST_SOURCE_HEADERS,
+    COST_TABLE_HEADERS,
+    cost_formula,
+    price_formula,
+)
+from engine.corrosion_defects import ENTER_MANUALLY
+from tests.helpers import (
+    detail_values,
+    legacy_workbook_bytes_with_rows,
+    valid_row_values,
+    workbook_bytes_with_rows,
+)
 from workbook_processor import (
     WorkbookProcessingError,
     _commercial_input_errors,
+    _quantity_errors,
     inspect_workbook,
     process_workbook,
 )
@@ -49,10 +71,345 @@ def test_inspects_a_valid_template_and_previews_populated_rows():
         'Pipe OD [mm]': 457.2,
         'Mechanism': 'Corrosion',
         'Defect Location': 'External',
+        'Defect Length Basis': 'Actual defect length',
+        'Repair Group ID': None,
         'Calculation Status': 'OK',
         'Error Code': '',
         'Error Message': '',
     },)
+
+
+def test_inspection_reports_main_detail_and_manual_group_counts():
+    """Catches a v1.2 inspection that ignores the linked detail table."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values(**{
+            'Defect Length Basis': ENTER_MANUALLY,
+            'Repair Group ID': 'R-001',
+            'Remaining Wall [mm]': None,
+        })],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.0),
+            detail_values(group='R-001', defect='D-02', length=35, wall=9.1),
+        ],
+    )
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+    assert inspection.populated_detail_rows == 2
+    assert inspection.manual_groups == 1
+    assert inspection.recognized_detail_input_headers == DETAIL_INPUT_HEADERS
+    assert inspection.missing_detail_input_headers == ()
+    assert inspection.unexpected_detail_headers == ()
+    assert inspection.preview[0]['Defect Length Basis'] == ENTER_MANUALLY
+    assert inspection.preview[0]['Repair Group ID'] == 'R-001'
+
+
+def _manual_row(group='R-001'):
+    return valid_row_values(**{
+        'Pipe OD [mm]': 1016.0,
+        'Nominal Wall [mm]': 12.0,
+        'Pipe Yield [MPa]': 450.0,
+        'Design Pressure [bar]': 104.9,
+        'Defect Length [mm]': 1000.0,
+        'Defect Length Basis': ENTER_MANUALLY,
+        'Repair Group ID': group,
+        'Remaining Wall [mm]': None,
+        'Prowrap CF Cloth Width [mm]': 500.0,
+        'Run Type A / Class 3 Check': 'Yes',
+    })
+
+
+def _result_signature(data: bytes):
+    workbook = _workbook(data)
+    main = workbook['Batch Input & Results']
+    detail = workbook['Individual Defects']
+    return (
+        tuple(main.cell(2, column).value for column in range(
+            len(INPUT_HEADERS) + 1,
+            len(INPUT_HEADERS) + len(OUTPUT_HEADERS) + 1,
+        )),
+        tuple(
+            tuple(detail.cell(row, column).value for column in range(
+                len(DETAIL_INPUT_HEADERS) + 1,
+                len(DETAIL_INPUT_HEADERS) + len(DETAIL_OUTPUT_HEADERS) + 1,
+            ))
+            for row in (2, 3)
+        ),
+    )
+
+
+def test_manual_rows_calculate_with_ordered_detail_results_and_one_governing_row():
+    """Catches pair reordering or loss of candidate results at the detail boundary."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'manual.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    detail_headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'REVIEW REQUIRED': 1}
+    assert [detail.cell(row, detail_headings.index('Calculation Status') + 1).value for row in (2, 3)] == [
+        'OK', 'OK',
+    ]
+    assert [detail.cell(row, detail_headings.index('Source Excel Row') + 1).value for row in (2, 3)] == [
+        2, 3,
+    ]
+    assert [detail.cell(row, detail_headings.index('Governing Defect') + 1).value for row in (2, 3)] == [
+        None, 'Yes',
+    ]
+    assert [detail.cell(row, detail_headings.index('Credited Safe Pressure [bar]') + 1).value for row in (2, 3)] == pytest.approx([
+        88.2257484144555, 87.83461911867067,
+    ])
+
+
+def test_high_smys_manual_folias_is_explicit_and_stable_on_reupload():
+    """Catches a limiting Manual Folias value becoming a blank detail cell."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values(**{
+            'Pipe OD [mm]': 1016.0,
+            'Nominal Wall [mm]': 12.0,
+            'Pipe Yield [MPa]': 550.0,
+            'Defect Length [mm]': 1000.0,
+            'Defect Length Basis': ENTER_MANUALLY,
+            'Repair Group ID': 'R-LONG',
+            'Remaining Wall [mm]': None,
+        })],
+        detail_rows=[detail_values(
+            group='R-LONG', defect='D-LONG', length=1000.0, wall=4.5,
+        )],
+    )
+
+    first = process_workbook(source, FIXED_TIME, 'manual-high-smys.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    first_detail = first_workbook['Individual Defects']
+    detail_headings = tuple(cell.value for cell in first_detail[1])
+    method_column = detail_headings.index('B31G Method') + 1
+    z_column = detail_headings.index('B31G Length Parameter z') + 1
+    folias_column = detail_headings.index('B31G Folias Factor M') + 1
+
+    assert first.status_counts == {'REVIEW REQUIRED': 1}
+    assert first_detail.cell(2, method_column).value == 'original'
+    assert first_detail.cell(2, z_column).value == pytest.approx(82.02099737532808)
+    assert first_detail.cell(2, folias_column).value == 'Infinity'
+
+    second = process_workbook(
+        first.workbook_bytes, FIXED_TIME, 'manual-high-smys-reupload.xlsx',
+    )
+    second_workbook = _workbook(second.workbook_bytes)
+    second_detail = second_workbook['Individual Defects']
+
+    assert second_detail.cell(2, method_column).value == 'original'
+    assert second_detail.cell(2, z_column).value == first_detail.cell(2, z_column).value
+    assert second_detail.cell(2, folias_column).value == 'Infinity'
+
+
+def test_warning_register_scans_the_last_controlled_detail_rows():
+    """Catches warning aggregation stopping before the 150-row detail boundary."""
+    workbook = _workbook(workbook_bytes_with_rows([_manual_row()]))
+    detail = workbook['Individual Defects']
+    for excel_row in (2, 150, 151):
+        values = detail_values(
+            group='R-001', defect=f'D-{excel_row}', length=10, wall=9.652,
+        )
+        for column, header in enumerate(DETAIL_INPUT_HEADERS, start=1):
+            detail.cell(excel_row, column, values[header])
+
+    result = process_workbook(_saved(workbook), FIXED_TIME, 'detail-boundaries.xlsx')
+    warnings = _workbook(result.workbook_bytes)['Warnings']
+    affected_rows = {
+        warnings.cell(row, 1).value: warnings.cell(row, 3).value
+        for row in range(4, warnings.max_row + 1)
+    }
+
+    assert affected_rows['W013'] == (
+        'Main 2; Individual Defects 2, 150, 151'
+    )
+
+
+def test_last_controlled_detail_candidate_keeps_scalar_audit_rows():
+    """Catches linked candidate audits being dropped from the detail worksheet."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(
+                group='R-001', defect=f'D-{index:04d}', length=10, wall=9.652,
+            )
+            for index in range(1, MAX_DETAIL_ROWS + 1)
+        ],
+    )
+
+    result = process_workbook(source, FIXED_TIME, '150-details.xlsx')
+    workbook = _workbook(result.workbook_bytes)
+    detail = workbook['Individual Defects']
+    detail_headings = tuple(cell.value for cell in detail[1])
+    last_audit = {
+        heading: detail.cell(151, detail_headings.index(heading) + 1).value
+        for heading in DETAIL_OUTPUT_HEADERS
+    }
+    assert last_audit['Source Excel Row'] == 151
+    assert last_audit['Calculation Status'] == 'OK'
+    assert last_audit['B31G d/t'] == pytest.approx(0.19566666666666674)
+    assert last_audit['B31G Safe Pressure [bar]'] == pytest.approx(88.2257484144555)
+    assert last_audit['B31G Operating Hoop Stress [MPa]'] == pytest.approx(
+        444.07666666666677
+    )
+    assert last_audit['Assessment Warning Codes'] == 'W013'
+
+
+def test_full_150_detail_audit_is_bounded_and_stable_on_reupload():
+    """Catches maximum-size linked audits overflowing or changing on rebuild."""
+    main_row = _manual_row()
+    main_row['Design Pressure [bar]'] = 50.0
+    main_row['Run Type A / Class 3 Check'] = 'No'
+    source = workbook_bytes_with_rows(
+        [main_row],
+        detail_rows=[
+            detail_values(
+                group='R-001', defect=f'D-{index:04d}', length=10, wall=9.652,
+            )
+            for index in range(1, MAX_DETAIL_ROWS + 1)
+        ],
+    )
+
+    first = process_workbook(source, FIXED_TIME, '150-details.xlsx')
+    first_workbook = _workbook(first.workbook_bytes)
+    detail = first_workbook['Individual Defects']
+    detail_headings = tuple(cell.value for cell in detail[1])
+    audit_headings = (
+        'Source Excel Row',
+        'Calculation Status',
+        'B31G d/t',
+        'B31G Length Parameter z',
+        'B31G Folias Factor M',
+        'B31G Flow Stress [MPa]',
+        'B31G Estimated Failure Stress [MPa]',
+        'B31G Failure Pressure [bar]',
+        'B31G Safe Pressure [bar]',
+        'B31G Safety Factor',
+        'B31G Operating Hoop Stress [MPa]',
+        'B31G Applicable',
+        'B31G Acceptable',
+        'Credited Safe Pressure [bar]',
+        'Governing Defect',
+    )
+    first_last_audit = tuple(
+        detail.cell(MAX_DETAIL_ROWS + 1, detail_headings.index(heading) + 1).value
+        for heading in audit_headings
+    )
+    assert first_last_audit[0:2] == (MAX_DETAIL_ROWS + 1, 'OK')
+    assert all(value is not None for value in first_last_audit[2:-1])
+    assert first_last_audit[-1] is None
+
+    second = process_workbook(
+        first.workbook_bytes, FIXED_TIME, '150-details-processed.xlsx',
+    )
+    second_workbook = _workbook(second.workbook_bytes)
+    second_detail = second_workbook['Individual Defects']
+
+    assert tuple(
+        second_detail.cell(MAX_DETAIL_ROWS + 1, detail_headings.index(heading) + 1).value
+        for heading in audit_headings
+    ) == first_last_audit
+
+
+def test_partial_detail_with_trimmed_group_invalidates_only_its_manual_owner():
+    """Catches losing the owner ID when a partially populated detail row fails parsing."""
+    source = workbook_bytes_with_rows(
+        [_manual_row(), valid_row_values(**{'Pipe OD [mm]': 508.0})],
+        detail_rows=[detail_values(
+            group='  R-001  ', defect='D-01', length=None, wall=9.0,
+        )],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'partial-detail.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    detail_headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'INPUT ERROR': 1, 'OK': 1}
+    assert detail.cell(2, detail_headings.index('Calculation Status') + 1).value == (
+        'INPUT ERROR'
+    )
+    assert 'REQUIRED_VALUE' in detail.cell(
+        2, detail_headings.index('Error Code') + 1,
+    ).value
+
+
+def test_invalid_orphan_detail_remains_local_and_does_not_block_main_rows():
+    """Catches an unowned detail error leaking into an unrelated repair result."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values()],
+        detail_rows=[detail_values(
+            group='ORPHAN', defect='D-X', length=None, wall=4.0,
+        )],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'orphan-detail.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'OK': 1}
+    assert detail.cell(2, headings.index('Calculation Status') + 1).value == 'INPUT ERROR'
+    assert set(detail.cell(2, headings.index('Error Code') + 1).value.split('; ')) == {
+        'REQUIRED_VALUE', 'ORPHAN_REPAIR_GROUP',
+    }
+
+
+def test_processed_manual_workbook_reuploads_without_changing_results():
+    """Catches trusting stale outputs or changing linked tuple order on re-upload."""
+    source = workbook_bytes_with_rows(
+        [_manual_row()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    first = process_workbook(source, FIXED_TIME, 'manual.xlsx')
+    second = process_workbook(first.workbook_bytes, FIXED_TIME, 'manual-processed.xlsx')
+
+    assert _result_signature(second.workbook_bytes) == _result_signature(first.workbook_bytes)
+
+
+def test_manual_system_error_marks_details_without_breaking_row_continuation(
+    monkeypatch,
+):
+    """Catches strict candidate mapping turning a row-local failure into a batch crash."""
+    import workbook_processor
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError('controlled test failure')
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', explode)
+    source = workbook_bytes_with_rows(
+        [_manual_row(), valid_row_values()],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    processed = process_workbook(source, FIXED_TIME, 'system-error.xlsx')
+    workbook = _workbook(processed.workbook_bytes)
+    detail = workbook['Individual Defects']
+    headings = tuple(cell.value for cell in detail[1])
+
+    assert processed.status_counts == {'SYSTEM ERROR': 2}
+    assert [detail.cell(row, headings.index('Calculation Status') + 1).value for row in (2, 3)] == [
+        'INPUT ERROR', 'INPUT ERROR',
+    ]
+    assert [detail.cell(row, headings.index('Error Code') + 1).value for row in (2, 3)] == [
+        'MAIN_ROW_NOT_CALCULATED', 'MAIN_ROW_NOT_CALCULATED',
+    ]
 
 
 def _capture_successful_mechanisms(monkeypatch):
@@ -95,7 +452,12 @@ def test_legacy_dent_is_canonical_through_preview_processing_and_reupload(monkey
     assert second_workbook['Batch Input & Results']['F2'].value == 'Dent w/crack'
     assert second_workbook['Cost Calculation']['F6'].value == 'Dent w/crack'
     assert first_workbook['Batch Input & Results']['A2'].value == 457.2
-    assert first_workbook['Batch Input & Results']['R2'].value == 300.0
+    main_headings = tuple(
+        cell.value for cell in first_workbook['Batch Input & Results'][1]
+    )
+    assert first_workbook['Batch Input & Results'].cell(
+        2, main_headings.index('Prowrap CF Cloth Width [mm]') + 1,
+    ).value == 300.0
     assert first_workbook['Batch Information']['B3'].value == 'Batch Customer'
     assert [second_workbook['Cost Calculation'][address].value for address in (
         'B3', 'E3', 'H3',
@@ -147,7 +509,8 @@ def test_missing_batch_information_is_a_workbook_error():
 
 
 @pytest.mark.parametrize('worksheet', [
-    'Batch Information', 'Batch Input & Results', 'Summary', 'Instructions', 'Lists',
+    'Batch Information', 'Batch Input & Results', 'Individual Defects',
+    'Summary', 'Instructions', 'Lists',
 ])
 def test_missing_required_worksheet_is_a_workbook_error(worksheet):
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
@@ -228,7 +591,7 @@ def test_formula_inputs_and_corrupt_or_encrypted_data_are_rejected_safely():
 
 
 @pytest.mark.parametrize(('worksheet_name', 'coordinate'), [
-    ('Batch Input & Results', 'AY501'),
+    ('Batch Input & Results', 'AY152'),
     ('Summary', 'B30'),
 ])
 def test_formula_anywhere_in_the_controlled_workbook_is_rejected(worksheet_name, coordinate):
@@ -307,7 +670,7 @@ def test_dense_worksheet_is_rejected_before_openpyxl_materializes_cells(monkeypa
     """Catches small compressed uploads that amplify into excessive cell objects."""
     import workbook_processor
 
-    source = _dense_workbook_bytes(100_001)
+    source = _dense_workbook_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
     assert len(source) < MAX_UPLOAD_BYTES
 
     def fail_if_loaded(*_args, **_kwargs):
@@ -329,7 +692,7 @@ def test_relocated_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     """Catches a worksheet relationship moved outside xl/worksheets bypassing the cap."""
     import workbook_processor
 
-    source = _relocated_dense_workbook_bytes(100_001)
+    source = _relocated_dense_workbook_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
     assert len(source) < MAX_UPLOAD_BYTES
 
     def fail_if_loaded(*_args, **_kwargs):
@@ -347,12 +710,94 @@ def test_relocated_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     )
 
 
+def test_relationship_worksheet_with_nonworksheet_content_type_rejects_before_openpyxl(
+    monkeypatch,
+):
+    """Catches content-type relabeling hiding a relationship-reachable dense sheet."""
+    import workbook_processor
+
+    source = _relabeled_dense_worksheet_bytes(workbook_processor._MAX_WORKBOOK_CELLS + 1)
+    assert len(source) < MAX_UPLOAD_BYTES
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached content-type-inconsistent worksheet')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
+def test_foreign_namespace_duplicate_relationship_cannot_shadow_dense_target(
+    monkeypatch,
+):
+    """A foreign duplicate must not replace the genuine OPC relationship."""
+    import workbook_processor
+
+    source = _dense_workbook_with_duplicate_relationship(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+        relationship_namespace='urn:protap:foreign-relationships',
+    )
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached foreign-namespace shadow bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
+def test_duplicate_opc_relationship_id_is_rejected_before_openpyxl(monkeypatch):
+    """Ambiguous genuine OPC relationship IDs are invalid package metadata."""
+    import workbook_processor
+
+    source = _dense_workbook_with_duplicate_relationship(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
+
+    def fail_if_loaded(*_args, **_kwargs):
+        raise AssertionError('openpyxl reached duplicate OPC relationship bypass')
+
+    monkeypatch.setattr(workbook_processor, 'load_workbook', fail_if_loaded)
+
+    inspection = workbook_processor.inspect_workbook(source)
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'UNREADABLE_WORKBOOK',
+    ]
+    assert inspection.workbook_errors[0].message == (
+        'The uploaded workbook has inconsistent worksheet declarations.'
+    )
+
+
+def test_explicit_internal_relationship_target_mode_is_accepted():
+    source = _explicit_internal_relationship_workbook_bytes()
+
+    inspection = inspect_workbook(source)
+
+    assert inspection.workbook_errors == ()
+    assert inspection.populated_rows == 1
+
+
 def test_arbitrary_suffix_dense_worksheet_is_rejected_before_openpyxl(monkeypatch):
     """Catches a valid worksheet content type using a non-XML part suffix."""
     import workbook_processor
 
     source = _relocated_dense_workbook_bytes(
-        100_001,
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
         new_path='xl/custom/dense.data',
     )
     assert len(source) < MAX_UPLOAD_BYTES
@@ -412,7 +857,7 @@ def test_strict_spreadsheetml_dense_worksheet_is_still_bounded(monkeypatch):
     import workbook_processor
 
     source = _dense_workbook_bytes(
-        100_001,
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
         namespace='http://purl.oclc.org/ooxml/spreadsheetml/main',
     )
 
@@ -433,7 +878,11 @@ def test_strict_spreadsheetml_dense_worksheet_is_still_bounded(monkeypatch):
 
 def test_foreign_custom_xml_with_worksheet_names_is_ignored():
     """Catches local-name scanning that treats unrelated customer XML as a sheet."""
-    source = _foreign_custom_xml_workbook_bytes(100_001)
+    import workbook_processor
+
+    source = _foreign_custom_xml_workbook_bytes(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
     assert len(source) < MAX_UPLOAD_BYTES
 
     inspection = inspect_workbook(source)
@@ -444,7 +893,11 @@ def test_foreign_custom_xml_with_worksheet_names_is_ignored():
 
 def test_foreign_cell_elements_inside_a_real_worksheet_extension_are_ignored():
     """Catches foreign extension elements being counted as SpreadsheetML cells."""
-    source = _worksheet_with_foreign_extension_bytes(100_001)
+    import workbook_processor
+
+    source = _worksheet_with_foreign_extension_bytes(
+        workbook_processor._MAX_WORKBOOK_CELLS + 1,
+    )
     assert len(source) < MAX_UPLOAD_BYTES
 
     with pytest.warns(UserWarning, match='Unknown extension is not supported'):
@@ -454,8 +907,8 @@ def test_foreign_cell_elements_inside_a_real_worksheet_extension_are_ignored():
     assert inspection.populated_rows == 1
 
 
-def test_more_than_500_populated_rows_is_a_workbook_error():
-    source = workbook_bytes_with_rows([valid_row_values() for _ in range(501)])
+def test_more_than_150_populated_rows_is_a_workbook_error():
+    source = workbook_bytes_with_rows([valid_row_values() for _ in range(151)])
 
     inspection = inspect_workbook(source)
 
@@ -463,7 +916,7 @@ def test_more_than_500_populated_rows_is_a_workbook_error():
     assert [issue.code for issue in inspection.workbook_errors] == ['INPUT_ROW_OUT_OF_RANGE']
 
 
-@pytest.mark.parametrize('excel_row', [502, 1000])
+@pytest.mark.parametrize('excel_row', [152, 1000])
 def test_populated_input_beyond_controlled_rows_is_a_workbook_error(excel_row):
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
     workbook['Batch Input & Results'].cell(excel_row, 1).value = 508.0
@@ -536,6 +989,69 @@ def test_processed_cost_formulas_and_commercial_inputs_are_safe_to_reupload():
     ]
 
 
+@pytest.mark.parametrize(('value', 'expected_code'), [
+    (None, None),
+    (' \t ', None),
+    (0, None),
+    (2.5, None),
+    (-0.01, 'INVALID_QUANTITY'),
+    (True, 'INVALID_QUANTITY'),
+    ('two', 'INVALID_QUANTITY'),
+    (float('nan'), 'INVALID_QUANTITY'),
+    (float('inf'), 'INVALID_QUANTITY'),
+    ('=1+1', 'FORMULA_NOT_ALLOWED'),
+])
+def test_cost_quantity_accepts_only_blank_or_finite_non_negative_numbers(value, expected_code):
+    """Catches untrusted quantity inputs reaching the rebuilt commercial output."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['W6'] = value
+
+    if isinstance(value, float) and not math.isfinite(value):
+        issues = _quantity_errors(workbook)
+        assert [issue.code for issue in issues] == [expected_code]
+    else:
+        inspection = inspect_workbook(_saved(workbook))
+        if expected_code is None:
+            assert inspection.workbook_errors == ()
+        else:
+            assert [issue.code for issue in inspection.workbook_errors] == [expected_code]
+
+
+def test_processed_cost_quantity_is_preserved_by_compact_cost_row_position():
+    """Catches a re-upload dropping valid Quantity values or trusting engineering cells."""
+    first = process_workbook(
+        workbook_bytes_with_rows([
+            valid_row_values(),
+            valid_row_values(**{'Pipe OD [mm]': 508.0}),
+        ]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(first.workbook_bytes)
+    cost = workbook['Cost Calculation']
+    cost['W6'], cost['W7'] = 0, 2.5
+    cost['A6'] = 999999.0
+
+    second = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    rebuilt = _workbook(second.workbook_bytes)['Cost Calculation']
+
+    assert [rebuilt[address].value for address in ('W6', 'W7')] == [0, 2.5]
+    assert rebuilt['X6'].value == cost_calculation.total_amount_formula(6)
+    assert rebuilt['X7'].value == cost_calculation.total_amount_formula(7)
+    assert rebuilt['A6'].value == 457.2
+
+
+def test_whitespace_only_cost_quantity_rebuilds_as_a_true_blank():
+    """Catches a visual blank Quantity becoming a text value in the trusted output."""
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Cost Calculation']['W6'] = ' \t '
+
+    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    rebuilt = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert rebuilt['W6'].value is None
+    assert rebuilt['X6'].value == cost_calculation.total_amount_formula(6)
+
+
 def test_whitespace_only_commercial_input_is_rebuilt_as_a_true_blank():
     """Catches whitespace bypassing blank validation and breaking Excel IF checks."""
     workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
@@ -604,13 +1120,54 @@ def test_changed_cost_heading_is_a_workbook_error():
     ]
 
 
-def test_exactly_500_controlled_rows_remain_valid():
+def test_exactly_150_controlled_rows_remain_valid():
     inspection = inspect_workbook(
-        workbook_bytes_with_rows([valid_row_values() for _ in range(500)])
+        workbook_bytes_with_rows([valid_row_values() for _ in range(150)])
     )
 
-    assert inspection.populated_rows == 500
+    assert inspection.populated_rows == 150
     assert inspection.workbook_errors == ()
+
+
+def test_maximum_processed_cost_region_ends_at_row_155():
+    """Catches Cost formulas or the compact table extending beyond 150 rows."""
+    result = process_workbook(
+        workbook_bytes_with_rows([valid_row_values() for _ in range(150)]),
+        FIXED_TIME,
+        '150-repairs.xlsx',
+    )
+    cost = _workbook(result.workbook_bytes)['Cost Calculation']
+
+    assert cost.tables['CostRows'].ref == 'A5:X155'
+    assert [cost[f'{column}155'].value for column in ('U', 'V', 'X')] == [
+        cost_calculation.cost_formula(155),
+        cost_calculation.price_formula(155),
+        cost_calculation.total_amount_formula(155),
+    ]
+    assert [cost[f'{column}156'].value for column in ('U', 'V', 'W', 'X')] == [
+        None, None, None, None,
+    ]
+
+
+def test_exactly_150_detail_rows_are_kept_and_first_row_beyond_is_rejected():
+    """Catches an off-by-one detail bound or an unbounded detail scan."""
+    exact = workbook_bytes_with_rows(
+        [valid_row_values()],
+        detail_rows=[
+            detail_values(group='ORPHAN', defect=f'D-{index}', length=10, wall=4.0)
+            for index in range(MAX_DETAIL_ROWS)
+        ],
+    )
+    assert inspect_workbook(exact).workbook_errors == ()
+
+    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
+    workbook['Individual Defects'].cell(152, 1).value = 'ORPHAN'
+    inspection = inspect_workbook(_saved(workbook))
+
+    assert [issue.code for issue in inspection.workbook_errors] == [
+        'DETAIL_ROW_OUT_OF_RANGE',
+    ]
+    assert 'A152' in inspection.workbook_errors[0].message
 
 
 def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
@@ -630,11 +1187,9 @@ def test_one_invalid_row_does_not_stop_valid_rows_and_inputs_are_preserved():
         _workbook(source)['Batch Input & Results'].cell(3, column).value
         for column in range(1, len(INPUT_HEADERS) + 1)
     ]
-    assert data['T2'].value == 'OK'
-    assert data['T3'].value == 'INPUT ERROR'
-    assert data['U3'].value == 'OUT_OF_RANGE'
-    assert 'Remaining Wall [mm]' in data['V3'].value
-    assert data['T4'].value == 'OK'
+    summary = processed['Summary']
+    assert summary['B13'].value == 2
+    assert summary['B16'].value == 1
 
 
 def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
@@ -646,17 +1201,61 @@ def test_processed_warning_sheet_consolidates_codes_and_affected_rows():
 
     result = process_workbook(source, processed_at=FIXED_TIME)
     workbook = _workbook(result.workbook_bytes)
-    data = workbook['Batch Input & Results']
     warnings = workbook['Warnings']
 
-    assert data['W2'].value == 'W018'
-    assert data['W3'].value == 'W018'
     assert warnings['A4'].value == 'W018'
     assert '300 mm or 500 mm' in warnings['B4'].value
     assert warnings['C4'].value == '2, 3'
     assert warnings['A4'].font.italic is False
     assert list(warnings.tables) == ['WarningRegister']
     assert warnings.tables['WarningRegister'].ref == 'A3:C4'
+
+
+def test_compact_main_sheet_keeps_warning_and_summary_aggregation_in_memory(
+    monkeypatch,
+):
+    """Catches Summary and Warnings reading diagnostics removed from main outputs."""
+    import workbook_processor
+
+    def review_calculation(_batch_info, row):
+        return RowCalculation(
+            source_excel_row=row.source_excel_row,
+            status=CalculationStatus.REVIEW_REQUIRED,
+            outputs={
+                'Wall Loss [%]': 50.0,
+                'Required Structural Thickness [mm]': 3.0,
+                'Installed Plies': 3,
+                'Total Repair Length [mm]': 600.0,
+                'Cloth Band Count': 2,
+                'Procurement Axial Length [mm]': 650.0,
+                'Fabric Area [m2]': 0.3,
+                'Epoxy Mass [kg]': 0.2,
+                'Repair Zone Length [mm]': 100.0,
+                'Thickness Calculation Method': 'Type A (Load Sharing)',
+                'Compliance Warnings': ('W018',),
+            },
+        )
+
+    monkeypatch.setattr(workbook_processor, 'calculate_row', review_calculation)
+
+    processed = process_workbook(
+        workbook_bytes_with_rows([valid_row_values()]),
+        processed_at=FIXED_TIME,
+    )
+    workbook = _workbook(processed.workbook_bytes)
+    data = workbook['Batch Input & Results']
+    warnings = workbook['Warnings']
+    summary = workbook['Summary']
+
+    assert tuple(cell.value for cell in data[1]) == INPUT_HEADERS + OUTPUT_HEADERS
+    assert 'Calculation Status' not in OUTPUT_HEADERS
+    assert 'Compliance Warnings' not in OUTPUT_HEADERS
+    assert warnings['A4'].value == 'W018'
+    assert warnings['C4'].value == '2'
+    assert summary['B14'].value == 1
+    assert summary['B19'].value == 1
+    assert summary['B21'].value == 1
+    assert summary['B22'].value == 1
 
 
 def test_processed_workbook_keeps_clear_no_warning_register_state():
@@ -687,30 +1286,29 @@ def test_processed_warning_register_remains_filterable_while_protected():
 
 def test_previous_five_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the previous template."""
-    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
-    del workbook['Cost Calculation']
-    del workbook['Warnings']
-
-    inspection = inspect_workbook(_saved(workbook))
-    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    source = legacy_workbook_bytes_with_rows(
+        [valid_row_values()], sheet_count=5,
+    )
+    inspection = inspect_workbook(source)
+    result = process_workbook(source, processed_at=FIXED_TIME)
 
     assert inspection.workbook_errors == ()
     assert _workbook(result.workbook_bytes).sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Cost Calculation', 'Warnings',
-        'Summary', 'Instructions', 'Lists',
+        'Batch Information', 'Batch Input & Results', 'Individual Defects',
+        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
 
 
 def test_previous_six_sheet_template_is_accepted_and_upgraded():
     """Catches a release that strands users holding the warning-register template."""
-    workbook = _workbook(workbook_bytes_with_rows([valid_row_values()]))
-    del workbook['Cost Calculation']
-
-    result = process_workbook(_saved(workbook), processed_at=FIXED_TIME)
+    source = legacy_workbook_bytes_with_rows(
+        [valid_row_values()], sheet_count=6,
+    )
+    result = process_workbook(source, processed_at=FIXED_TIME)
 
     assert _workbook(result.workbook_bytes).sheetnames == [
-        'Batch Information', 'Batch Input & Results', 'Cost Calculation',
-        'Warnings', 'Summary', 'Instructions', 'Lists',
+        'Batch Information', 'Batch Input & Results', 'Individual Defects',
+        'Cost Calculation', 'Warnings', 'Summary', 'Instructions', 'Lists',
     ]
 
 
@@ -723,18 +1321,17 @@ def test_processed_cost_sheet_maps_requested_values_and_formulas():
     workbook = _workbook(result.workbook_bytes)
     source = workbook['Batch Input & Results']
     cost = workbook['Cost Calculation']
-    expected_source_columns = (
-        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'R',
-        'AC', 'AJ', 'AK', 'AR', 'AS', 'AT', 'AU', 'AV',
-    )
+    source_headings = tuple(cell.value for cell in source[1])
 
     assert tuple(cell.value for cell in cost[5]) == COST_TABLE_HEADERS
     assert [cost.cell(6, column).value for column in range(1, 21)] == [
-        source[f'{column}2'].value for column in expected_source_columns
+        source.cell(2, source_headings.index(header) + 1).value
+        for header in COST_SOURCE_HEADERS
     ]
     assert cost['U6'].value == cost_formula(6)
     assert cost['V6'].value == price_formula(6)
-    assert cost.tables['CostRows'].ref == 'A5:V6'
+    assert cost['X6'].value == cost_calculation.total_amount_formula(6)
+    assert cost.tables['CostRows'].ref == 'A5:X6'
 
 
 def test_uploaded_cost_table_values_are_never_trusted():
@@ -751,9 +1348,11 @@ def test_uploaded_cost_table_values_are_never_trusted():
     regenerated = _workbook(second.workbook_bytes)
 
     assert regenerated['Cost Calculation']['A6'].value == 457.2
-    assert regenerated['Cost Calculation']['S6'].value == (
-        regenerated['Batch Input & Results']['AU2'].value
-    )
+    main = regenerated['Batch Input & Results']
+    headings = tuple(cell.value for cell in main[1])
+    assert regenerated['Cost Calculation']['S6'].value == main.cell(
+        2, headings.index(COST_SOURCE_HEADERS[18]) + 1,
+    ).value
 
 
 def test_processed_cost_sheet_uses_one_compact_row_per_populated_defect():
@@ -774,7 +1373,7 @@ def test_processed_cost_sheet_uses_one_compact_row_per_populated_defect():
         457.2, 610.0, None,
     ]
     assert cost['U7'].value == cost_formula(7)
-    assert cost.tables['CostRows'].ref == 'A5:V7'
+    assert cost.tables['CostRows'].ref == 'A5:X7'
 
 
 def test_processed_cost_table_filter_covers_every_compact_row():
@@ -789,7 +1388,7 @@ def test_processed_cost_table_filter_covers_every_compact_row():
     )
     table = _workbook(result.workbook_bytes)['Cost Calculation'].tables['CostRows']
 
-    assert table.ref == 'A5:V8'
+    assert table.ref == 'A5:X8'
     assert table.autoFilter.ref == table.ref
 
 
@@ -808,8 +1407,8 @@ def test_cleared_processed_defect_ignores_stale_exact_cost_formulas():
     cost = _workbook(second.workbook_bytes)['Cost Calculation']
 
     assert second.populated_rows == 0
-    assert [cost.cell(6, column).value for column in range(1, 23)] == [None] * 22
-    assert cost.tables['CostRows'].ref == 'A5:V6'
+    assert [cost.cell(6, column).value for column in range(1, 25)] == [None] * 24
+    assert cost.tables['CostRows'].ref == 'A5:X6'
 
 
 def test_processed_workbook_requests_full_automatic_recalculation():
@@ -825,7 +1424,7 @@ def test_processed_workbook_requests_full_automatic_recalculation():
     assert workbook.calculation.forceFullCalc is True
 
 
-def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
+def test_processed_workbook_updates_summary_without_main_diagnostic_json():
     source = workbook_bytes_with_rows([valid_row_values(**{
         'Mechanism': 'Leak',
         'Design Pressure [bar]': 150.0,
@@ -833,13 +1432,9 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
 
     result = process_workbook(source, processed_at=FIXED_TIME)
     workbook = _workbook(result.workbook_bytes)
-    data = workbook['Batch Input & Results']
     summary = workbook['Summary']
 
     assert result.status_counts == {'NOT REPAIRABLE': 1}
-    assert data['T2'].value == 'NOT REPAIRABLE'
-    assert data['AY2'].value.startswith('{')
-    assert data['AY2'].value == _stable_json(data['AY2'].value)
     assert summary['B3'].value == 'Batch Customer'
     assert summary['B4'].value == 'Batch Location'
     assert summary['B5'].value == 'B-001'
@@ -847,7 +1442,7 @@ def test_processed_workbook_updates_summary_and_uses_stable_diagnostic_json():
     assert summary['B10'].value == 1
     assert summary['B15'].value == 1
     assert summary['B24'].value == '1.2.0'
-    assert summary['B25'].value == '746f3b3'
+    assert summary['B25'].value == '91b68d6'
 
 
 def test_processed_workbook_records_the_sanitized_uploaded_source_name():
@@ -989,6 +1584,104 @@ def _relocated_dense_workbook_bytes(
     )
 
 
+def _relabeled_dense_worksheet_bytes(cell_count: int) -> bytes:
+    """Keep a worksheet relationship but relabel its target as generic XML."""
+    worksheet_content_type = (
+        b'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml'
+    )
+    source = _dense_workbook_bytes(cell_count)
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '[Content_Types].xml':
+                target = (
+                    b'<Override PartName="/xl/worksheets/sheet5.xml" ContentType="'
+                    + worksheet_content_type
+                    + b'"/>'
+                )
+                replacement = (
+                    b'<Override PartName="/xl/worksheets/sheet5.xml" '
+                    b'ContentType="application/xml"/>'
+                )
+                assert target in content
+                content = content.replace(target, replacement)
+            output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _dense_workbook_with_duplicate_relationship(
+    cell_count: int,
+    relationship_namespace: str | None = None,
+) -> bytes:
+    """Append a safe-target decoy after the genuine dense-sheet relationship."""
+    source = _relabeled_dense_worksheet_bytes(cell_count)
+    namespace = (
+        f' xmlns="{relationship_namespace}"'.encode()
+        if relationship_namespace is not None
+        else b''
+    )
+    decoy = (
+        b'<Relationship'
+        + namespace
+        + b' Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+        b'relationships/worksheet" Target="/xl/worksheets/sheet6.xml" '
+        b'Id="rId5"/>'
+    )
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == 'xl/_rels/workbook.xml.rels':
+                assert content.endswith(b'</Relationships>')
+                content = content.replace(
+                    b'</Relationships>', decoy + b'</Relationships>',
+                )
+            output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
+def _explicit_internal_relationship_workbook_bytes() -> bytes:
+    """Return a valid workbook with explicitly internal OPC relationships."""
+    source = workbook_bytes_with_rows([valid_row_values()])
+    office_document = (
+        b'<Relationship Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/officeDocument" '
+        b'Target="xl/workbook.xml" Id="rId1"/>'
+    )
+    explicit_office_document = office_document.replace(
+        b'/>', b' TargetMode="Internal"/>',
+    )
+    worksheet = (
+        b'<Relationship Type="http://schemas.openxmlformats.org/'
+        b'officeDocument/2006/relationships/worksheet" '
+        b'Target="/xl/worksheets/sheet1.xml" Id="rId1"/>'
+    )
+    explicit_worksheet = worksheet.replace(
+        b'/>', b' TargetMode="iNtErNaL"/>',
+    )
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(source)) as input_zip, zipfile.ZipFile(
+        output, 'w',
+    ) as output_zip:
+        for entry in input_zip.infolist():
+            content = input_zip.read(entry.filename)
+            if entry.filename == '_rels/.rels':
+                assert office_document in content
+                content = content.replace(
+                    office_document, explicit_office_document,
+                )
+            elif entry.filename == 'xl/_rels/workbook.xml.rels':
+                assert worksheet in content
+                content = content.replace(worksheet, explicit_worksheet)
+            output_zip.writestr(entry, content)
+    return output.getvalue()
+
+
 def _relocated_worksheet_workbook_bytes(
     worksheet_xml: bytes,
     new_path: str,
@@ -1114,9 +1807,3 @@ def _column_name(column: int) -> str:
         column, remainder = divmod(column - 1, 26)
         name = chr(65 + remainder) + name
     return name
-
-
-def _stable_json(value: str) -> str:
-    import json
-
-    return json.dumps(json.loads(value), sort_keys=True, separators=(',', ':'))

@@ -1,14 +1,17 @@
 # Pinned calculation-engine source
 
-**Batch release version:** `1.2.0`
+**CalcBatch release version:** `1.2.0`
+**Verified linked-corrosion source revision:** `91b68d64508a4786934f0e17f2aea0dbebf745a7` (`91b68d6` recorded in processed workbooks)
 
-The calculation engine in this repository was copied from
+## Historical batch baseline (not the emitted source revision)
+
+The original batch baseline was copied from
 [`Prowrap110/Iso24817Calcv1.1`](https://github.com/Prowrap110/Iso24817Calcv1.1)
 at released merge commit `746f3b3d65d73a2836962126e76f880919c51d0d`
 on 2026-08-15. That release commit contains the reviewed dent-split feature
-head `7ca0e66ab4f8334fe07fda54b64599f54b1a1256`; the calculation modules ported
-here use that approved source behavior. Processed workbooks record the short
-released revision `746f3b3`.
+head `7ca0e66ab4f8334fe07fda54b64599f54b1a1256`; it remains the historical
+origin for the non-corrosion batch behavior. It is not the source revision
+emitted by CalcBatch v1.2 workbooks.
 
 The copied modules are:
 
@@ -17,6 +20,37 @@ The copied modules are:
 - `prowrap_calculations.py`
 - `prowrap_materials.py`
 - `prowrap_mechanisms.py`
+
+## Verified v1.2 corrosion-engine port
+
+The external-corrosion assessment route was ported from the verified source revision
+`91b68d64508a4786934f0e17f2aea0dbebf745a7` in the separate
+`Iso24817Calcv1.2` checkout. The source files were `corrosion_defects.py` and
+`prowrap_calculations.py`.
+
+The batch engine retains the verified v1.2 defect-length bases: `Actual defect
+length`, `Independent defects`, and `Enter manually`. It assesses every
+candidate B31G length/remaining-wall pair independently, uses the least
+creditable candidate as governing, and preserves the full entered repair-zone
+length for ISO axial extent.
+
+The following batch-only behaviors are intentionally retained rather than
+replaced by the source module:
+
+- `allow_unqualified_temperature=False` remains the engine default, with the
+  batch adapter's high-temperature review-warning path unchanged.
+- Zero-pressure Type B handling retains the batch three-ply review warning and
+  the two-year service-life warning without dereferencing Formula 12 details.
+- The 300 mm and 500 mm cloth-width configurations retain the batch 50 mm
+  stitching-overlap procurement behavior.
+- Existing dent mechanism routing and strict unsupported axial-load validation
+  remain batch behavior; the v1.2 corrosion basis applies only to external
+  corrosion.
+
+CalcBatch v1.2 emits Batch Engine Version `1.2.0` and Source Engine Revision
+`91b68d6` on every processed main row and in the Summary. The historical v1.1
+baseline revision is retained here only for traceability; it is never emitted
+as the current linked-corrosion engine revision.
 
 ## Approved dent mechanism split
 

@@ -1,6 +1,13 @@
+from datetime import UTC, datetime
+from io import BytesIO
+
+from openpyxl import load_workbook
 import pytest
 
+from engine.corrosion_defects import ENTER_MANUALLY
+from tests.helpers import detail_values, valid_row_values, workbook_bytes_with_rows
 from warning_catalog import UnmappedWarningError, warning_codes, warning_meaning
+from workbook_processor import process_workbook
 
 
 WARNING_SAMPLES = (
@@ -40,6 +47,17 @@ def test_warning_codes_preserve_first_occurrence_order_and_remove_duplicates():
     assert warning_codes(messages) == ('W018', 'W001')
 
 
+def test_candidate_prefixed_b31g_warnings_keep_their_permanent_codes():
+    """Catches linked-detail warning prefixes breaking B31G traceability."""
+    messages = (
+        'Defect ID D-01: B31G: SMYS > 483 MPa: falling back to Original B31G.',
+        'Defect ID D-01: B31G Level 1: the corroded pipe alone is NOT '
+        'acceptable at the design pressure.',
+    )
+
+    assert warning_codes(messages) == ('W011', 'W013')
+
+
 def test_unknown_warning_is_rejected_instead_of_receiving_an_improvised_code():
     """Catches uncatalogued engineering conditions that would become untraceable."""
     with pytest.raises(UnmappedWarningError, match='Unmapped compliance warning'):
@@ -52,3 +70,39 @@ def test_cloth_warning_meaning_names_both_approved_widths():
 
     assert '300 mm' in meaning
     assert '500 mm' in meaning
+
+
+def test_warning_register_identifies_main_and_detail_rows():
+    """Catches linked warnings being recorded only against their main repair."""
+    source = workbook_bytes_with_rows(
+        [valid_row_values(**{
+            'Pipe OD [mm]': 1016.0,
+            'Nominal Wall [mm]': 12.0,
+            'Pipe Yield [MPa]': 450.0,
+            'Design Pressure [bar]': 104.9,
+            'Defect Length [mm]': 1000.0,
+            'Defect Length Basis': ENTER_MANUALLY,
+            'Repair Group ID': 'R-001',
+            'Remaining Wall [mm]': None,
+            'Prowrap CF Cloth Width [mm]': 500.0,
+            'Run Type A / Class 3 Check': 'Yes',
+        })],
+        detail_rows=[
+            detail_values(group='R-001', defect='D-01', length=10, wall=9.652),
+            detail_values(group='R-001', defect='D-02', length=35, wall=10.0),
+        ],
+    )
+
+    processed = process_workbook(
+        source, processed_at=datetime(2026, 8, 14, 12, 0, tzinfo=UTC),
+    )
+    workbook = load_workbook(BytesIO(processed.workbook_bytes), data_only=False)
+    warnings = workbook['Warnings']
+    warning_rows = {
+        warnings.cell(row, 1).value: warnings.cell(row, 3).value
+        for row in range(4, warnings.max_row + 1)
+    }
+
+    assert warning_rows['W013'] == 'Main 2; Individual Defects 2, 3'
+    assert workbook['Summary']['B24'].value == '1.2.0'
+    assert workbook['Summary']['B25'].value == '91b68d6'

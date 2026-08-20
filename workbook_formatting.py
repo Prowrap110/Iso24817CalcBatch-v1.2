@@ -65,3 +65,11 @@ def set_capped_column_widths(worksheet, minimum=MIN_COLUMN_WIDTH, maximum=MAX_CO
         worksheet.column_dimensions[column_letter].width = min(
             maximum, max(minimum, longest + 2)
         )
+
+
+def header_column_letter(worksheet, header: str) -> str:
+    """Return the column letter for an exact first-row header."""
+    for cell in worksheet[1]:
+        if cell.value == header:
+            return cell.column_letter
+    raise ValueError(f'Worksheet {worksheet.title!r} has no header {header!r}')

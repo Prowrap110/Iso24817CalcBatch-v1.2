@@ -1,39 +1,29 @@
-# Deploy the separate PROWRAP Batch Repair Calculator
+# Deploy CalcBatch v1.2 to its existing public application
 
-## Mandatory isolation boundary
+## Fixed release target
 
-Deploy batch version 1.2.0 only from the dedicated `Iso24817CalcBatch` GitHub repository and to the separate batch Streamlit application with its own URL: `https://prowrap-batch-calculator.streamlit.app/`.
+Deploy only the reviewed `feature/linked-corrosion-v12` branch of the existing
+CalcBatch v1.2 repository to the existing public Streamlit application:
 
-Never deploy the batch code over, replace, rename, or redirect the existing v1.1 repository or application:
+`https://iso24817calcbatch-prowrapv12.streamlit.app`
 
-- repository: `Prowrap110/Iso24817Calcv1.1`
-- existing application: `https://iso24817calc-prowrapv11.streamlit.app`
+Do not create a new repository, branch, Streamlit application, or URL. Do not
+merge into, push to, reconfigure, replace, rename, redirect, or deploy over
+the PROWRAP v1.1 calculator or any older CalcBatch application.
 
-This release changes only the separate batch repository and batch application. It does not include, merge, redeploy, or roll back any v1.1 branch or application.
+## Release procedure
 
-## Independent deployments
+1. Confirm the checked-out repository is CalcBatch v1.2 and the branch is `feature/linked-corrosion-v12`.
+2. Push only the reviewed CalcBatch v1.2 commit to that existing branch. Do not alter Streamlit application settings, entry point, secrets, or URL.
+3. Allow the existing public application at `https://iso24817calcbatch-prowrapv12.streamlit.app` to redeploy from that branch.
+4. Download the template and verify this exact eight-sheet order: `Batch Information`, `Batch Input & Results`, `Individual Defects`, `Cost Calculation`, `Warnings`, `Summary`, `Instructions`, and hidden `Lists`.
+5. Verify the main table/filter is `A1:AC151`, the Individual Defects table/filter is `A1:X151`, and both accept no more than 150 populated rows. Confirm a populated input at Excel row 152 is rejected on either input sheet.
+6. Verify the only nine main outputs, in order, are `Wall Loss [%]`, `Required Structural Thickness [mm]`, `Installed Plies`, `Total Repair Length [mm]`, `Cloth Band Count`, `Procurement Axial Length [mm]`, `Fabric Area [m2]`, `Epoxy Mass [kg]`, and `Repair Zone Length [mm]`.
+7. Upload the generated six-row acceptance workbook and confirm Actual, Independent, linked Manual, invalid Manual group, `Dent no-crack`, and `Dent w/crack` all appear in that order.
+8. Confirm the three corrosion comparison rows retain a 1,000 mm repair-zone length. Reconcile their safe pressures as 7.571542406120033 MPa, 8.82257484144555 MPa, and 8.783461911867068 MPa; reconcile installed plies as 12, 7, and 7. Confirm Manual defect `D-02` governs.
+9. Confirm the processed workbook records Batch Engine Version `1.2.0` and Pinned Source Revision `91b68d6`.
+10. Confirm the Cost Calculation table has `A5:X...` coverage for the populated compact rows. `B3`, `E3`, `H3`, and `W6:W155` Quantity are highlighted and editable; Quantity accepts only a blank or non-negative number. `U`, `V`, and `X` hold only the controlled Cost, Price, and Total Amount formulas, with Total Amount equal to `Price x Quantity`.
+11. Re-upload a processed workbook with non-negative B3/E3/H3 values and valid Quantity values. Confirm assumptions and Quantity persist while the trusted eight-sheet output, linked details, warnings, and exact controlled formulas are rebuilt.
+12. Confirm the release guidance requires users to download and use the current 150/150 template. Older 500/2,000-row templates are not supported or guaranteed.
 
-1. Push and merge the reviewed batch branch only in `Prowrap110/Iso24817CalcBatch`.
-2. Confirm Streamlit Community Cloud keeps `app.py`, Python 3.11, and the existing separate batch-app URL.
-3. Download the template and confirm the exact seven-sheet order: `Batch Information`, `Batch Input & Results`, `Cost Calculation`, `Warnings`, `Summary`, `Instructions`, `Lists`.
-4. Confirm `Cost Calculation!B3`, `E3`, and `H3` are blank, highlighted, and editable; the input template itself contains no formulas.
-5. Upload the generated acceptance workbook, calculate, and confirm the six statuses in order: `OK`, `REVIEW REQUIRED`, `NOT REPAIRABLE`, `INPUT ERROR`, `REVIEW REQUIRED`, `OK`.
-6. Confirm the `Dent w/crack` acceptance row reports zero effective pipe capacity, a 50 bar composite pressure deficit, nine plies, and the basis `Dent w/crack - full-pressure laminate`.
-7. Confirm the external `Dent no-crack` acceptance row reports component-pipe capacity of approximately 107.76 bar, zero composite pressure deficit, three plies, and the basis `Dent no-crack - substrate load sharing`.
-8. On `Summary`, confirm Batch Engine Version is `1.2.0` and Pinned Source Revision is `746f3b3` before accepting the deployment.
-9. Confirm the processed result has twenty mapped engineering fields on `Cost Calculation`, six compact rows, and only the exact controlled formulas in `U6:V11`. Verify `Cost = Fabric Area x CF Cost / m2 + Epoxy Mass x Epoxy Cost / kg` and `Price = Cost x Price Multiplier`; no currency symbol should be fixed.
-10. Confirm the commercial table and formula cells are protected, row warnings contain codes only, `W003` lists affected rows `4, 6`, and the 500 mm `Dent no-crack` row has fabric/epoxy quantities and no warning.
-11. Enter non-negative values in the three commercial cells, save the processed workbook, upload it again, and confirm the values and both canonical dent names are retained while the seven-sheet table and controlled formulas are regenerated. Previously downloaded controlled five-sheet, six-sheet, and seven-sheet workbooks must remain upgradeable under the existing structural validation rules.
-12. Confirm the existing v1.1 URL still loads its independent calculator, without changing or redeploying it.
-
-No uploaded workbook should be configured for persistent storage. Keep the application's temporary-file/session-only behaviour intact.
-
-## Batch rollback procedure
-
-1. Redeploy the **batch Streamlit app** from the last known-good commit in
-   `Prowrap110/Iso24817CalcBatch`.
-2. If needed, disable or remove only the batch app from Streamlit Cloud.
-3. Do not change the v1.1 repository, deployment, URL, or configuration during
-   a batch rollback.
-
-The existing v1.1 calculator remains outside this release and rollback scope.
+The application must continue to process one workbook at a time in session/temporary memory only. Do not configure persistent customer-workbook storage.
